@@ -47,13 +47,17 @@ public final class VdHelperMain {
     private static Object sPower;
     private static Method sUserActivity;
 
+    static Context resolveSystemContext() throws Exception {
+        Class<?> at = Class.forName("android.app.ActivityThread");
+        Object thread = at.getMethod("systemMain").invoke(null);
+        return (Context) at.getMethod("getSystemContext").invoke(thread);
+    }
+
     public static void main(String[] args) {
         Looper.prepareMainLooper();
         final String authority = args.length > 0 ? args[0] : VdProvider.AUTHORITY;
         try {
-            Class<?> at = Class.forName("android.app.ActivityThread");
-            Object thread = at.getMethod("systemMain").invoke(null);
-            sCtx = (Context) at.getMethod("getSystemContext").invoke(thread);
+            sCtx = resolveSystemContext();
         } catch (Throwable t) {
             System.err.println("[helper] systemMain 失败: " + t);
             System.exit(2);
@@ -90,7 +94,8 @@ public final class VdHelperMain {
     }
 
 
-    static void init(Context ctx) {
+    public static synchronized void init(Context ctx) {
+        if (sCtx != null) return;
         sCtx = ctx;
         preparePower();
         prepareInput();
@@ -191,7 +196,23 @@ public final class VdHelperMain {
 
     // ---------------------------------------------------------------- binder 实现
 
-    private static final class Impl extends IVdHelper.Stub {
+    public static class Impl extends IVdHelper.Stub {
+
+        public Impl() {
+            try {
+                init(resolveSystemContext());
+            } catch (Throwable t) {
+                throw new IllegalStateException("systemMain 失败", t);
+            }
+        }
+
+        public Impl(Context ctx) {
+            try {
+                init(ctx != null ? ctx : resolveSystemContext());
+            } catch (Throwable t) {
+                throw new IllegalStateException("init 失败", t);
+            }
+        }
 
         @Override
         public int createDisplay(Surface surface, int w, int h, int dpi, int flags) {

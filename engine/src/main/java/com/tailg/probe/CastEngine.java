@@ -867,10 +867,22 @@ public final class CastEngine {
         Process start(String apkPath, String authority) throws Exception;
     }
 
+    /** App 通过 priv-kit UserService 直接提供已连接的 IVdHelper Binder。 */
+    public interface DirectHelperProvider {
+        boolean available();
+
+        IVdHelper getHelper() throws Exception;
+    }
+
     private static volatile HelperLauncher sHelperLauncher;
+    private static volatile DirectHelperProvider sDirectHelperProvider;
 
     public static void setHelperLauncher(HelperLauncher l) {
         sHelperLauncher = l;
+    }
+
+    public static void setDirectHelperProvider(DirectHelperProvider p) {
+        sDirectHelperProvider = p;
     }
 
     private Process helperProc;
@@ -880,7 +892,21 @@ public final class CastEngine {
 
     /** 起 root 助手并等它把 binder 送过来。 */
     private boolean startHelper() {
-        if (helper != null) return true;
+        if (helper != null && helper.asBinder().pingBinder()) return true;
+        helper = null;
+        DirectHelperProvider dp = sDirectHelperProvider;
+        if (dp != null && dp.available()) {
+            try {
+                IVdHelper direct = dp.getHelper();
+                if (direct != null && direct.asBinder().pingBinder()) {
+                    helper = direct;
+                    LogSink.line("CAST", "priv-kit UserService 助手已就绪");
+                    return true;
+                }
+            } catch (Throwable t) {
+                LogSink.line("CAST", "priv-kit UserService 获取失败，回退旧路径: " + t);
+            }
+        }
         final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         VdProvider.setOnHelper(new VdProvider.OnHelper() {
             @Override

@@ -39,12 +39,17 @@ object NavAccessibility {
             "settings put secure accessibility_enabled 1"
 
         var lastDetail = ""
+        if (PrivKitBridge.isConnected()) {
+            val r = RootShell.runRedacted(cmd, "enable-accessibility")
+            if (r.ok && isEnabled(ctx)) return EnableResult(true, "priv-kit")
+            lastDetail = r.out.orEmpty()
+        }
         if (ShizukuBridge.isGranted()) {
             val r = ShizukuBridge.run(cmd, "enable-accessibility")
             if (r.ok && isEnabled(ctx)) return EnableResult(true, "Shizuku")
             lastDetail = r.out.orEmpty()
         }
-        val rootRes = RootShell.run(cmd)
+        val rootRes = RootShell.runRedacted(cmd, "enable-accessibility")
         if (rootRes.ok && isEnabled(ctx)) return EnableResult(true, "Root")
         if (rootRes.out.isNotBlank()) lastDetail = rootRes.out
         return EnableResult(false, "", lastDetail)

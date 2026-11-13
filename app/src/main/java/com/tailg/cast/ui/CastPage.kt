@@ -48,6 +48,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tailg.cast.NavAccessibility
+import com.tailg.cast.PrivKitBridge
 import com.tailg.probe.NavFavorites
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -75,12 +76,7 @@ fun CastPage(
     onHeight: (Int) -> Unit,
     onBitrate: (Int) -> Unit,
     onFps: (Int) -> Unit,
-    onBackend: (String) -> Unit,
-    shizukuStatus: String,
-    shizukuGranted: Boolean,
-    onRequestShizuku: () -> Unit,
     onPreview: () -> Unit,
-    onSelfCheck: () -> Unit,
     onOpenNav: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -91,7 +87,6 @@ fun CastPage(
     var bitrateSamples by remember { mutableStateOf(emptyList<Pair<Long, Long>>()) }
     var bitrateKbps by remember { mutableStateOf(0L) }
     var showQuality by remember { mutableStateOf(false) }
-    var showAdvanced by remember { mutableStateOf(false) }
 
     var favorites by remember { mutableStateOf(NavFavorites.list(ctx)) }
     var activeFavId by remember { mutableStateOf(NavFavorites.activeId(ctx)) }
@@ -202,6 +197,12 @@ fun CastPage(
                         Modifier.weight(1f),
                     )
                 }
+                EmbeddedMirrorPreview(
+                    dispW = cfg.width,
+                    dispH = cfg.height,
+                    contentTop = cfg.safeTop,
+                    contentH = cfg.contentHeight,
+                )
             }
 
             when {
@@ -216,7 +217,7 @@ fun CastPage(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp),
-                        ) { Text("查看虚拟屏", fontWeight = FontWeight.SemiBold) }
+                        ) { Text("全屏虚拟屏", fontWeight = FontWeight.SemiBold) }
                         FilledTonalButton(
                             onClick = onStopCast,
                             colors = ButtonDefaults.filledTonalButtonColors(
@@ -399,11 +400,6 @@ fun CastPage(
             subtitle = if (cfg.carSsid.isNotBlank()) "当前车机：${cfg.carSsid}" else "扫码或输入车机热点",
             badge = if (snap.wifiConnected || snap.bleConnected) "已连接" else null,
         ) { onOpenSettings() }
-        ActionRow(
-            title = "投屏引擎与调试",
-            subtitle = if (cfg.backend == "shizuku") "Shizuku 虚拟屏模式" else "root 虚拟屏模式",
-            badge = if (cfg.backend == "shizuku") "Shizuku" else "root",
-        ) { showAdvanced = true }
     }
 
     if (showQuality) {
@@ -498,63 +494,6 @@ fun CastPage(
                 TextButton(onClick = { showQuality = false }) { Text("完成") }
             },
         )
-    }
-
-    if (showAdvanced) {
-        DetailDialog("虚拟屏与调试", onClose = { showAdvanced = false }) {
-            Text(
-                "虚拟屏后端",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            ChipRow(
-                listOf("root", "Shizuku"),
-                if (cfg.backend == "shizuku") "Shizuku" else "root",
-            ) { label ->
-                onBackend(if (label == "Shizuku") "shizuku" else "root")
-            }
-            if (cfg.backend == "shizuku") {
-                InfoLine("Shizuku", shizukuStatus)
-                if (!shizukuGranted) {
-                    FilledTonalButton(
-                        onClick = onRequestShizuku,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(46.dp),
-                    ) { Text("授权 Shizuku（无需 root）") }
-                }
-            }
-            InfoLine("目标应用", cfg.targetPkg.ifBlank { "未设置" })
-            InfoLine("编码尺寸", "${cfg.width}×${cfg.height}")
-            InfoLine(
-                "安全区",
-                if (cfg.safeTop == cfg.safeBottom) {
-                    "上下各 ${cfg.safeTop}"
-                } else {
-                    "上 ${cfg.safeTop} / 下 ${cfg.safeBottom}"
-                },
-            )
-            FilledTonalButton(
-                onClick = {
-                    showAdvanced = false
-                    onPreview()
-                },
-                enabled = snap.casting,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp),
-            ) { Text("查看虚拟屏（可触摸操作）") }
-            OutlinedButton(
-                onClick = {
-                    showAdvanced = false
-                    onSelfCheck()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp),
-            ) { Text("协议自检") }
-            EmptyHint("root 和 Shizuku 都能让导航应用跑在独立屏上，不需要录屏授权。")
-        }
     }
 }
 

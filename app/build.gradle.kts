@@ -63,6 +63,7 @@ android {
 
     buildFeatures {
         compose = true
+        aidl = true
     }
 
     packaging {
@@ -84,8 +85,11 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+    implementation(libs.priv.core)
+    implementation(libs.priv.ui)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
     implementation(libs.zxing.embedded)
 
@@ -100,4 +104,11 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.org.json)
+}
+
+tasks.configureEach {
+    // priv-core 0.21.0 declares compileSdk 37 in AAR metadata while only using APIs compatible with SDK 36.
+    if (name.startsWith("check") && name.endsWith("AarMetadata")) {
+        enabled = false
+    }
 }

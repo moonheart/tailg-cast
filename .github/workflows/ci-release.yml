@@ -107,7 +107,51 @@ jobs:
           "$APKSIGNER" verify --print-certs "$APK_IN"
           cp "$APK_IN" "$APK_OUT"
 
-      - name: Publish GitHub Release
+      - name: Extract release notes from CHANGELOG.md
+        id: changelog
+        run: |
+          python3 - <<'PY'
+          import os, re, pathlib
+          tag = os.environ["GITHUB_REF_NAME"]
+          ver = tag.lstrip("v")
+          candidates = {tag, ver, f"v{ver}"}
+          changelog = pathlib.Path("CHANGELOG.md")
+          notes = ""
+          if changelog.exists():
+              lines = changelog.read_text(encoding="utf-8").splitlines()
+              capture = False
+              buf = []
+              header_re = re.compile(r"^##\s+\[?([^\]\s]+)\]?")
+              for line in lines:
+                  m = header_re.match(line)
+                  if m:
+                      if capture:
+                          break
+                      if m.group(1) in candidates:
+                          capture = True
+                          continue
+                  elif capture:
+                      buf.append(line)
+              notes = "\n".join(buf).strip()
+          out_path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "release_notes.md"
+          has_notes = bool(notes)
+          if has_notes:
+              out_path.write_text(notes + "\n", encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"has_notes={'true' if has_notes else 'false'}\n")
+          print(f"Extracted {len(notes)} chars from CHANGELOG.md for {tag} (has_notes={has_notes})")
+          PY
+
+      - name: Publish GitHub Release (from CHANGELOG.md)
+        if: steps.changelog.outputs.has_notes == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tailg-cast-${{ github.ref_name }}-release.apk
+          body_path: ${{ runner.temp }}/release_notes.md
+          generate_release_notes: false
+
+      - name: Publish GitHub Release (auto-generated fallback)
+        if: steps.changelog.outputs.has_notes != 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: tailg-cast-${{ github.ref_name }}-release.apk

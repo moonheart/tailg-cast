@@ -40,6 +40,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.tailg.cast.CarQr
 import com.tailg.cast.NavAccessibility
+import com.tailg.cast.PrivKitBridge
 import com.tailg.probe.NavFavorites
 
 @Composable
@@ -51,14 +52,11 @@ fun SettingsPage(
     onCloudToken: (String) -> Unit,
     onClearCloudToken: () -> Unit,
     onLogin: () -> Unit,
-    onRequestPermissions: () -> Unit,
-    onBatteryWhitelist: () -> Unit,
-    onBatterySettings: () -> Unit,
     onOpenNav: () -> Unit,
     onOpenTheme: () -> Unit,
     onOpenCar: () -> Unit,
+    onOpenPermissions: () -> Unit,
     onShareLog: () -> Unit,
-    onSelfCheck: () -> Unit,
 ) {
     val cfg = snap.cfg
     var ssid by remember(cfg.carSsid) { mutableStateOf(cfg.carSsid) }
@@ -68,11 +66,17 @@ fun SettingsPage(
     var tuc by remember(cfg.tuc) { mutableStateOf(cfg.tuc) }
     var mac by remember(cfg.mac) { mutableStateOf(cfg.mac) }
     var showCloudDetail by remember { mutableStateOf(false) }
+    var showCarPair by remember { mutableStateOf(false) }
     var showIdentity by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
 
     val ctx = LocalContext.current
+    val appVersion = remember(ctx) {
+        runCatching {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+        }.getOrNull() ?: "0.2.0"
+    }
     val favCount = remember { NavFavorites.list(ctx).size }
     val accessibilityOn = NavAccessibility.isEnabled(ctx)
 
@@ -176,28 +180,15 @@ fun SettingsPage(
         icon = Icons.Filled.Settings,
         helpText = "车机热点名和蓝牙名相同，通常以 TL_ 开头。扫码或填写保存后，连接时系统会弹窗确认，点允许即可。",
     ) {
-        FilledTonalButton(
-            onClick = { launchScan() },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(46.dp),
-        ) { Text("扫车机二维码配对") }
-        SettingField("热点 / 蓝牙名称", ssid, { ssid = it }, "TL_c37282ba633")
-        SettingField("热点密码", pass, { pass = it }, "车机热点密码", password = true)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
-                onClick = { onConnectCar(ssid.trim(), pass) },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(46.dp),
-            ) { Text("保存并连接") }
-            FilledTonalButton(
-                onClick = onForgetWifi,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(46.dp),
-            ) { Text("忘记网络") }
-        }
+        ActionRow(
+            title = "车机 Wi-Fi / 蓝牙配对",
+            subtitle = if (cfg.carSsid.isNotBlank()) "已保存：${cfg.carSsid}" else "扫码或输入车机热点",
+            badge = when {
+                snap.wifiConnected || snap.bleConnected -> "已连接"
+                cfg.carSsid.isNotBlank() -> "已配对"
+                else -> "去配对"
+            },
+        ) { showCarPair = true }
         ActionRow(
             title = "仪表主题与壁纸",
             subtitle = "更换仪表盘皮肤",
@@ -220,35 +211,16 @@ fun SettingsPage(
         ) { onOpenNav() }
     }
 
-    // 4. 权限与保活
+    // 4. 授权与权限（统一入口）
     SectionCard(
-        title = "后台保活与权限",
+        title = "授权与权限",
         icon = Icons.Filled.Notifications,
-        helpText = "投屏和车机监听需要在后台持续运行，建议授予蓝牙、Wi-Fi 与通知权限，并将本应用加入省电白名单。",
     ) {
-        StatusLine(
-            "蓝牙 / Wi-Fi / 通知",
-            if (snap.permissionsOk) "已授予" else "有缺失",
-            snap.permissionsOk,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
-                onClick = onRequestPermissions,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(46.dp),
-            ) { Text("请求权限") }
-            FilledTonalButton(
-                onClick = onBatteryWhitelist,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(46.dp),
-            ) { Text("省电白名单") }
-        }
-        TextButton(
-            onClick = onBatterySettings,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("打不开？打开系统省电列表", fontSize = 12.sp) }
+        ActionRow(
+            title = "授权与权限中心",
+            subtitle = PrivKitBridge.statusSummary() + if (snap.permissionsOk) " · 基础权限完整" else " · 有基础权限未授予",
+            badge = if (PrivKitBridge.isConnected() && snap.permissionsOk) "已就绪" else "待配置",
+        ) { onOpenPermissions() }
     }
 
     // 5. 高级与关于
@@ -261,12 +233,12 @@ fun SettingsPage(
             cfg.nickname.ifBlank { "未设置" },
         ) { showIdentity = true }
         ActionRow(
-            "日志与检测",
-            "导出运行日志 · 协议自检",
+            "运行日志",
+            "导出与分享最近会话日志",
         ) { showLogs = true }
         ActionRow(
             "关于与免责声明",
-            "王者骑行助手 v0.1.0 · 非官方开源工具",
+            "王者骑行助手 v$appVersion · 非官方开源工具",
         ) { showAbout = true }
     }
 
@@ -335,7 +307,7 @@ fun SettingsPage(
     }
 
     if (showLogs) {
-        DetailDialog("日志与自检", onClose = { showLogs = false }) {
+        DetailDialog("运行日志", onClose = { showLogs = false }) {
             Text(
                 "目录：Android/data/com.tailg.cast/files/sessions",
                 fontSize = 12.sp,
@@ -348,24 +320,15 @@ fun SettingsPage(
                     .fillMaxWidth()
                     .height(46.dp),
             ) { Text("分享最近日志") }
-            FilledTonalButton(
-                onClick = {
-                    showLogs = false
-                    onSelfCheck()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp),
-            ) { Text("协议自检") }
         }
     }
 
     if (showAbout) {
         DetailDialog("关于与免责声明", onClose = { showAbout = false }) {
             InfoLine("应用名称", "王者骑行助手（非官方第三方工具）")
-            InfoLine("版本", "0.1.0")
+            InfoLine("版本", appVersion)
             InfoLine("协议", "17818 / 15456 / 15457 / 18888 / 19000")
-            InfoLine("构建", "Kotlin 2.2 · Compose · AGP 8.13")
+            InfoLine("构建", "Kotlin 2.4 · Compose · AGP 8.13")
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
@@ -390,6 +353,39 @@ fun SettingsPage(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+        }
+    }
+
+    if (showCarPair) {
+        DetailDialog("车机 Wi-Fi / 蓝牙配对", onClose = { showCarPair = false }) {
+            FilledTonalButton(
+                onClick = { launchScan() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp),
+            ) { Text("扫车机二维码配对") }
+            SettingField("热点 / 蓝牙名称", ssid, { ssid = it }, "TL_c37282ba633")
+            SettingField("热点密码", pass, { pass = it }, "车机热点密码", password = true)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = {
+                        onConnectCar(ssid.trim(), pass)
+                        showCarPair = false
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(46.dp),
+                ) { Text("保存并连接") }
+                FilledTonalButton(
+                    onClick = {
+                        onForgetWifi()
+                        showCarPair = false
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(46.dp),
+                ) { Text("忘记网络") }
             }
         }
     }

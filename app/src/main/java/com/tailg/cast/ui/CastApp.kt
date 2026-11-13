@@ -68,6 +68,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.tailg.cast.ChargeState
 import com.tailg.cast.LoginActivity
+import com.tailg.cast.PrivKitBridge
 import com.tailg.cast.ShizukuBridge
 import com.tailg.cast.VehicleStatus
 import com.tailg.cast.theme.ThemeServer
@@ -102,6 +103,8 @@ private enum class SubPage(val label: String, val subtitle: String) {
     Car("仪表控制", "本地 17818 / 蓝牙直连与日夜模式"),
     Theme("仪表主题与壁纸", "选择主题 zip 并上传到车机仪表"),
     Nav("常用目的地", "投屏自动导航与无障碍自动点击"),
+    Permissions("授权与权限", "特权环境 / 系统权限 / 后台保活 / 无障碍"),
+    Privilege("特权运行环境", "Root / 无线调试 / Shizuku 授权"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -114,12 +117,12 @@ fun CastApp() {
     var mapProvider by remember { mutableStateOf(NavFavorites.getMapProvider(ctx)) }
     var tabName by rememberSaveable { mutableStateOf(Tab.Cast.name) }
     var subPageName by rememberSaveable { mutableStateOf<String?>(null) }
+    var privilegeReturnToPermissions by rememberSaveable { mutableStateOf(false) }
     var cloudNote by rememberSaveable { mutableStateOf("") }
     var vehicle by remember { mutableStateOf<VehicleStatus?>(null) }
     var cloudBusy by remember { mutableStateOf(false) }
     var showConnection by remember { mutableStateOf(false) }
     var cloudExpired by remember { mutableStateOf(false) }
-    var selfCheck by remember { mutableStateOf<String?>(null) }
     var themePkg by remember { mutableStateOf<ThemePackageInfo?>(null) }
     var themeState by remember { mutableStateOf(ThemeUiState()) }
     var themeBusy by remember { mutableStateOf(false) }
@@ -455,11 +458,10 @@ fun CastApp() {
         ProbeService.config?.useShizuku = shizuku
         if (shizuku) {
             CastEngine.setHelperLauncher(ShizukuBridge)
-            RootShell.setExecutor(ShizukuBridge)
         } else {
             CastEngine.setHelperLauncher(null)
-            RootShell.setExecutor(null)
         }
+        RootShell.setExecutor(PrivKitBridge)
         cfg = Config.load(ctx)
         snap = snapshot(ctx, cfg)
         if (shizuku && !shizukuGranted && ShizukuBridge.isReady()) {
@@ -663,6 +665,15 @@ fun CastApp() {
         }
     }
 
+    if (subPage == SubPage.Privilege) {
+        PrivilegePage(
+            onBack = {
+                subPageName = if (privilegeReturnToPermissions) SubPage.Permissions.name else null
+            },
+        )
+        return
+    }
+
     Scaffold(
         containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
         topBar = {
@@ -697,7 +708,9 @@ fun CastApp() {
                     }
                 },
                 actions = {
-                    ConnectionBadge(snap = snap) { showConnection = true }
+                    if (subPage != SubPage.Privilege) {
+                        ConnectionBadge(snap = snap) { showConnection = true }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
@@ -790,6 +803,19 @@ fun CastApp() {
                     onSwitchMap = ::applyMapProvider,
                 )
 
+                SubPage.Permissions -> PermissionsCenterPage(
+                    snap = snap,
+                    onOpenPrivilege = {
+                        privilegeReturnToPermissions = true
+                        subPageName = SubPage.Privilege.name
+                    },
+                    onRequestPermissions = ::requestPermissions,
+                    onBatteryWhitelist = ::batteryWhitelist,
+                    onBatterySettings = ::batterySettings,
+                )
+
+                SubPage.Privilege -> Unit
+
                 null -> when (activeTab) {
                 Tab.Cast -> CastPage(
                     snap = snap,
@@ -799,12 +825,17 @@ fun CastApp() {
                     onStopService = { ctx.stopService(Intent(ctx, ProbeService::class.java)) },
                     onStartCast = {
                         val backend = snap.cfg.backend
-                        if (backend == "shizuku" && !shizukuGranted) {
+                        if (PrivKitBridge.isConnected()) {
+                            toast(ctx, "priv-kit 虚拟屏投屏")
+                            Thread { ProbeService.startCast(-1, null) }.start()
+                        } else if (backend == "shizuku" && !shizukuGranted) {
                             if (shizukuReady) {
                                 toast(ctx, "先授权 Shizuku")
                                 ShizukuBridge.requestPermission()
                             } else {
-                                toast(ctx, "先启动 Shizuku（ADB 或无线调试）")
+                                toast(ctx, "请先在特权运行环境中授权（支持无线调试 / Shizuku / Root）")
+                                privilegeReturnToPermissions = false
+                                subPageName = SubPage.Privilege.name
                             }
                         } else {
                             toast(ctx, if (backend == "shizuku") "Shizuku 虚拟屏投屏" else "root 虚拟屏投屏")
@@ -813,12 +844,14 @@ fun CastApp() {
                     },
                     onStartServiceAndCast = {
                         val backend = snap.cfg.backend
-                        if (backend == "shizuku" && !shizukuGranted) {
+                        if (!PrivKitBridge.isConnected() && backend == "shizuku" && !shizukuGranted) {
                             if (shizukuReady) {
                                 toast(ctx, "先授权 Shizuku")
                                 ShizukuBridge.requestPermission()
                             } else {
-                                toast(ctx, "先启动 Shizuku（ADB 或无线调试）")
+                                toast(ctx, "请先在特权运行环境中授权（支持无线调试 / Shizuku / Root）")
+                                privilegeReturnToPermissions = false
+                                subPageName = SubPage.Privilege.name
                             }
                         } else {
                             startProbeService(ctx)
@@ -839,25 +872,11 @@ fun CastApp() {
                     onHeight = ::applyHeight,
                     onBitrate = ::applyBitrate,
                     onFps = ::applyFps,
-                    onBackend = ::setBackend,
-                    shizukuStatus = shizukuText,
-                    shizukuGranted = shizukuGranted,
-                    onRequestShizuku = {
-                        if (ShizukuBridge.isReady()) ShizukuBridge.requestPermission()
-                        else toast(ctx, "先启动 Shizuku（ADB 或无线调试）")
-                    },
                     onPreview = {
                         ctx.startActivity(
                             Intent(ctx, MirrorActivity::class.java)
                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         )
-                    },
-                    onSelfCheck = {
-                        val header = VideoHeader.build(1024, 600)
-                        val json = Codec.jsonFrame("""{"msg_id":27,"func":"OTA","act":1,"type":0}""")
-                        selfCheck = "69 字节头：${VideoHeader.width(header)}×${VideoHeader.height(header)}，" +
-                            "magic=${VideoHeader.magic(header)}\nJSON：${json.size} 字节，" +
-                            "头=${"%02X %02X".format(json[0].toInt() and 0xFF, json[1].toInt() and 0xFF)}"
                     },
                     onOpenNav = { subPageName = SubPage.Nav.name },
                     onOpenSettings = {
@@ -923,18 +942,11 @@ fun CastApp() {
                         vehicle = null
                         toast(ctx, "token 已清除")
                     },
-                    onRequestPermissions = ::requestPermissions,
-                    onBatteryWhitelist = ::batteryWhitelist,
-                    onBatterySettings = ::batterySettings,
                     onOpenNav = { subPageName = SubPage.Nav.name },
                     onOpenTheme = { subPageName = SubPage.Theme.name },
                     onOpenCar = { subPageName = SubPage.Car.name },
+                    onOpenPermissions = { subPageName = SubPage.Permissions.name },
                     onShareLog = ::shareLog,
-                    onSelfCheck = {
-                        val header = VideoHeader.build(1024, 600)
-                        selfCheck = "69 字节头：${VideoHeader.width(header)}×${VideoHeader.height(header)}\n" +
-                            "JSON 帧：${Codec.jsonFrame("""{"ok":true}""").size} 字节"
-                    },
                 )
                 }
             }
@@ -956,15 +968,6 @@ fun CastApp() {
                 tabName = Tab.Vehicle.name
                 subPageName = SubPage.Car.name
             },
-        )
-    }
-
-    selfCheck?.let { text ->
-        AlertDialog(
-            onDismissRequest = { selfCheck = null },
-            title = { Text("协议自检") },
-            text = { Text(text) },
-            confirmButton = { TextButton(onClick = { selfCheck = null }) { Text("好") } },
         )
     }
 }
