@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">王者骑行助手</string>
+    <string name="nav_accessibility_description">用于在高德或百度地图路线页自动点击「开始导航」。只在地图路线界面查找该按钮，不会点击「同意」或其他按钮。</string>
+</resources>
