@@ -883,6 +883,7 @@ fun CastApp() {
                         subPageName = null
                         tabName = Tab.Settings.name
                     },
+                    onOpenPermissions = { subPageName = SubPage.Permissions.name },
                 )
 
                 Tab.Vehicle -> VehiclePage(

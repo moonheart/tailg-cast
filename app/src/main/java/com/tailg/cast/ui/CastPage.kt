@@ -14,8 +14,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -79,6 +81,7 @@ fun CastPage(
     onPreview: () -> Unit,
     onOpenNav: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenPermissions: () -> Unit,
 ) {
     val ctx = LocalContext.current
     val cfg = snap.cfg
@@ -92,11 +95,19 @@ fun CastPage(
     var activeFavId by remember { mutableStateOf(NavFavorites.activeId(ctx)) }
     var navAuto by remember { mutableStateOf(NavFavorites.isAutoStart(ctx)) }
     val accessibilityOn = NavAccessibility.isEnabled(ctx)
+    var privSettled by remember { mutableStateOf(PrivKitBridge.isConnected()) }
 
     LaunchedEffect(Unit) {
         favorites = NavFavorites.list(ctx)
         activeFavId = NavFavorites.activeId(ctx)
         navAuto = NavFavorites.isAutoStart(ctx)
+    }
+
+    LaunchedEffect(Unit) {
+        if (!privSettled) {
+            delay(1200)
+            privSettled = true
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -121,6 +132,52 @@ fun CastPage(
                     .coerceAtLeast(0) * 8) / dt
             } else {
                 bitrateKbps = 0
+            }
+        }
+    }
+
+    val privMissing = privSettled && !PrivKitBridge.isConnected()
+    val basicMissing = !snap.permissionsOk
+    if (privMissing || basicMissing) {
+        val missingText = listOfNotNull(
+            if (privMissing) "特权运行环境" else null,
+            if (basicMissing) "蓝牙/Wi-Fi/通知权限" else null,
+        ).joinToString("、")
+        Surface(
+            onClick = onOpenPermissions,
+            shape = RoundedCornerShape(16.dp),
+            color = WarnAmber.copy(alpha = 0.14f),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Notifications,
+                    contentDescription = null,
+                    tint = WarnAmber,
+                    modifier = Modifier.size(20.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "有授权尚未就绪，点击前往配置",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        "缺少：$missingText",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

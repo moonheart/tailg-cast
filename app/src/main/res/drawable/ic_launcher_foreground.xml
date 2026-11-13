@@ -1,0 +1,57 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 后轮 -->
+    <path
+        android:pathData="M34,62a8,8 0 1,0 0,16a8,8 0 1,0 0,-16z"
+        android:strokeWidth="4.2"
+        android:strokeColor="#FFFFFF" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,68a2,2 0 1,0 0,4a2,2 0 1,0 0,-4z" />
+
+    <!-- 前轮 -->
+    <path
+        android:pathData="M74,62a8,8 0 1,0 0,16a8,8 0 1,0 0,-16z"
+        android:strokeWidth="4.2"
+        android:strokeColor="#FFFFFF" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M74,68a2,2 0 1,0 0,4a2,2 0 1,0 0,-4z" />
+
+    <!-- 座垫 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M29,47C29,44.5 31,43.5 34,43.5L45,43.5C47.5,43.5 48.5,45 48,47L46.5,50.5L29.5,50.5Z" />
+
+    <!-- 车身与脚踏 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M26,57C27,52 31,50 37,50L46,50L48,62L60,62L64,42L69,42L65,67C64.5,69 63,70 60.5,70L45.5,70C43,70 41.5,68 40.5,65C39.5,61.5 37,59.5 34,59.5C30.5,59.5 28,60.5 26,57Z" />
+
+    <!-- 车把与前叉 -->
+    <path
+        android:pathData="M64,42L61,35L56,35"
+        android:strokeWidth="3.5"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M67,48L74,70"
+        android:strokeWidth="3.8"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
+
+    <!-- 前大灯 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M69,41L74,41C76,41 77,42.5 77,44C77,45.5 76,47 74,47L68.5,47Z" />
+
+    <!-- 电动闪电标识 -->
+    <path
+        android:fillColor="#FACC15"
+        android:pathData="M56.5,39L50,49L54.5,49L53.5,57L60,47L55.5,47Z" />
+</vector>
