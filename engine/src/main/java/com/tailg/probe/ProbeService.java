@@ -55,6 +55,10 @@ public class ProbeService extends Service {
     public static volatile int carMileage = -1;      // total，单位未知，按原值显示
     public static volatile int carTire = -1;
     public static volatile String carRide = "";      // current/max/average
+    public static volatile String frontTireSummary = "";
+    public static volatile String rearTireSummary = "";
+    public static volatile String tireMatchSummary = "";
+    public static volatile String offlineMapSummary = "";
     public static volatile long lastCarJsonAt;
     // 面板指令的应答情况
     public static volatile String lastCmdFunc = "";
@@ -90,6 +94,7 @@ public class ProbeService extends Service {
         createChannel();
         startAsForeground();
         config = Config.load(this);
+        LogSink.rawCapture = config.rawCapture;
         cast = new CastEngine(this, config, new CastEngine.Listener() {
             @Override
             public void onCastState(String state) {
@@ -602,6 +607,7 @@ public class ProbeService extends Service {
                 LogSink.line("17818<<", "非法长度 " + f.head());
                 break;
             }
+            LogSink.rawFrame("17818", "RX", f.type, f.cmd, f.payload);
             if (Codec.isJson(f)) {
                 String js = Codec.jsonText(f);
                 lastJson = js;
@@ -634,6 +640,14 @@ public class ProbeService extends Service {
         LogSink.event("car.json", "\"from\":\"" + from + "\",\"text\":\"" + LogSink.esc(js) + "\"");
     }
 
+    /** 车机下行 MUSIC 指令回调，由 app 层 CarNotificationService 注册。 */
+    public interface CarMusicHandler {
+        void onCarMusicControl(int status);
+        void onCarMusicQueryStatus();
+    }
+
+    public static volatile CarMusicHandler musicHandler;
+
     private static void parseCarJson(String js) {
         try {
             lastCarJsonAt = System.currentTimeMillis();
@@ -653,6 +667,44 @@ public class ProbeService extends Service {
                         carEndurance = o.optInt("endurance", -1);
                         carTire = o.optInt("tire_pressure", -1);
                     }
+                } else if ("MUSIC".equals(o.optString("func"))) {
+                    CarMusicHandler h = musicHandler;
+                    if (h != null) {
+                        String act = o.optString("act");
+                        if ("control".equals(act)) {
+                            h.onCarMusicControl(o.optInt("status", -1));
+                        } else if ("get_status".equals(act)) {
+                            h.onCarMusicQueryStatus();
+                        }
+                    }
+                } else if ("TIRE".equals(o.optString("func"))) {
+                    String act = o.optString("act");
+                    if ("ret_data".equals(act)) {
+                        int idx = o.optInt("index", 0);
+                        double pre = o.optDouble("pre", 0.0);
+                        int temp = o.optInt("temp", 0);
+                        int preSta = o.optInt("pre_status", 0);
+                        int leakSta = o.optInt("leak_status", 0);
+                        int batSta = o.optInt("bat_status", 0);
+                        String warn = (preSta > 0 || leakSta > 0 || batSta > 0)
+                                ? " (异常 pre=" + preSta + " leak=" + leakSta + " bat=" + batSta + ")"
+                                : " 正常";
+                        String summary = String.format(java.util.Locale.US, "%.1f / %d℃%s", pre, temp, warn);
+                        if (idx == 1) frontTireSummary = summary;
+                        else if (idx == 2) rearTireSummary = summary;
+                        else {
+                            frontTireSummary = summary;
+                        }
+                    } else if ("tire_match_sta".equals(act)) {
+                        int fSta = o.optInt("front_match_status", 0);
+                        int rSta = o.optInt("rear_match_status", 0);
+                        String fMac = o.optString("front_mac", "");
+                        String rMac = o.optString("rear_mac", "");
+                        tireMatchSummary = "前:" + (fSta == 1 ? "已配对(" + fMac + ")" : "未配对")
+                                + " / 后:" + (rSta == 1 ? "已配对(" + rMac + ")" : "未配对");
+                    }
+                } else if ("INSIDENAVI".equals(o.optString("func"))) {
+                    offlineMapSummary = o.toString();
                 }
             } catch (Throwable ignored) {
             }
@@ -713,6 +765,7 @@ public class ProbeService extends Service {
         try {
             out.write(data);
             out.flush();
+            LogSink.raw("17818", "TX", data);
             LogSink.line("17818>>", what + " (" + data.length + "B) " + LogSink.hex(data, Math.min(data.length, 64)));
         } catch (Throwable t) {
             LogSink.line("17818>>", what + " 发送失败: " + t);
@@ -777,6 +830,7 @@ public class ProbeService extends Service {
                 outs[i].write(data);
                 outs[i].flush();
                 any = true;
+                LogSink.raw(tags[i], "TX", data);
                 LogSink.line("CAR>>", tags[i] + " " + what + " (" + data.length + "B)");
             } catch (Throwable t) {
                 LogSink.line("CAR>>", tags[i] + " 发送失败 " + t);
@@ -868,6 +922,7 @@ public class ProbeService extends Service {
             Codec.RawFrame f = Codec.readFrame(in);
             if (f == null) break;
             framesOther++;
+            LogSink.rawFrame(tag, "RX", f.type, f.cmd, f.payload);
             if (Codec.isJson(f)) {
                 String js = Codec.jsonText(f);
                 LogSink.line(tag + "<<", "JSON " + js);

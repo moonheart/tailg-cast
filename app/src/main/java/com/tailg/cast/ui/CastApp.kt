@@ -66,12 +66,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.tailg.cast.CallStateMonitor
 import com.tailg.cast.ChargeState
 import com.tailg.cast.LoginActivity
 import com.tailg.cast.PrivKitBridge
 import com.tailg.cast.ShizukuBridge
 import com.tailg.cast.VehicleStatus
 import com.tailg.cast.theme.ThemeServer
+import com.tailg.cast.theme.ThemeUploadMode
 import com.tailg.probe.BleLink
 import com.tailg.probe.CarCmd
 import com.tailg.probe.CastEngine
@@ -85,6 +87,7 @@ import com.tailg.probe.WifiLink
 import com.tailg.protocol.Codec
 import com.tailg.protocol.ThemePackage
 import com.tailg.protocol.ThemePackageInfo
+import com.tailg.protocol.WallpaperBuilder
 import com.tailg.protocol.VideoHeader
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -124,6 +127,7 @@ fun CastApp() {
     var showConnection by remember { mutableStateOf(false) }
     var cloudExpired by remember { mutableStateOf(false) }
     var themePkg by remember { mutableStateOf<ThemePackageInfo?>(null) }
+    var themeMode by remember { mutableStateOf(ThemeUploadMode.THEME) }
     var themeState by remember { mutableStateOf(ThemeUiState()) }
     var themeBusy by remember { mutableStateOf(false) }
     val themeServerRef = remember { arrayOfNulls<ThemeServer>(1) }
@@ -224,6 +228,46 @@ fun CastApp() {
                 Handler(Looper.getMainLooper()).post {
                     themeBusy = false
                     themeState = ThemeUiState(error = "解析失败：${t.message}")
+                }
+            }
+        }.start()
+    }
+
+    val wallpaperMediaPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        themeBusy = true
+        themeMode = ThemeUploadMode.WALLPAPER
+        themeState = ThemeUiState(status = "正在打包自制壁纸…")
+        Thread {
+            try {
+                val mime = ctx.contentResolver.getType(uri).orEmpty()
+                val isVideo = mime.startsWith("video/")
+                val dir = File(ctx.cacheDir, "wp_build_${System.currentTimeMillis()}")
+                dir.mkdirs()
+                val mediaFile = File(dir, if (isVideo) "night.mp4" else "bg_1.png")
+                ctx.contentResolver.openInputStream(uri)?.use { input ->
+                    mediaFile.outputStream().use { output -> input.copyTo(output) }
+                } ?: error("打不开媒体文件")
+                val outZip = File(dir, "custom_wallpaper.zip")
+                WallpaperBuilder.build(
+                    mediaFile = mediaFile,
+                    isVideo = isVideo,
+                    wallpaperName = "自制壁纸",
+                    outZipFile = outZip,
+                    workDir = File(dir, "work"),
+                )
+                val info = ThemePackage.extract(outZip, File(dir, "out"))
+                Handler(Looper.getMainLooper()).post {
+                    themePkg = info
+                    themeBusy = false
+                    themeState = ThemeUiState(status = "已生成壁纸包：${info.customName}")
+                }
+            } catch (t: Throwable) {
+                Handler(Looper.getMainLooper()).post {
+                    themeBusy = false
+                    themeState = ThemeUiState(error = "打包失败：${t.message}")
                 }
             }
         }.start()
@@ -352,13 +396,13 @@ fun CastApp() {
         themeState = ThemeUiState(running = true, status = "准备上传…")
 
         val begin = {
-            val server = ThemeServer(ctx, info, themeListener())
+            val server = ThemeServer(ctx, info, themeMode, themeListener())
             themeServerRef[0] = server
             server.start()
         }
 
         if (ProbeService.running) {
-            toast(ctx, "已停止投屏，准备主题上传")
+            toast(ctx, "已停止投屏，准备${themeMode.label}上传")
             ctx.stopService(Intent(ctx, ProbeService::class.java))
             Handler(Looper.getMainLooper()).postDelayed({ begin() }, 800)
         } else {
@@ -648,6 +692,8 @@ fun CastApp() {
     LaunchedEffect(Unit) {
         ensureDefaults(ctx)
         cfg = Config.load(ctx)
+        com.tailg.probe.LogSink.rawCapture = cfg.rawCapture
+        CallStateMonitor.ensureStarted(ctx)
         val needed = neededPermissions(ctx)
         if (needed.isNotEmpty()) permissionLauncher.launch(needed)
         maybeCheckCloudToken()
@@ -781,14 +827,21 @@ fun CastApp() {
                     onDayNight = { night -> CarCmd.dayOrNight(night) },
                     onStopNavi = { CarCmd.stopNavi() },
                     onScreenChoose = { v -> CarCmd.screenChoose(v) },
+                    onSave = ::save,
+                    onOpenPermissions = { subPageName = SubPage.Permissions.name },
                 )
 
                 SubPage.Theme -> ThemePage(
                     pkg = themePkg,
+                    mode = themeMode,
                     state = themeState,
                     busy = themeBusy,
+                    onModeChange = { themeMode = it },
                     onPick = {
                         themePicker.launch(arrayOf("application/zip", "application/octet-stream"))
+                    },
+                    onBuildWallpaper = {
+                        wallpaperMediaPicker.launch(arrayOf("image/*", "video/mp4"))
                     },
                     onUpload = ::startThemeUpload,
                     onCancel = ::stopThemeUpload,

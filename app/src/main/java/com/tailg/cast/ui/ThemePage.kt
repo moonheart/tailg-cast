@@ -11,8 +11,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,6 +28,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tailg.cast.theme.ThemeUploadMode
 import com.tailg.protocol.ThemePackageInfo
 
 data class ThemeUiState(
@@ -40,9 +43,12 @@ data class ThemeUiState(
 @Composable
 fun ThemePage(
     pkg: ThemePackageInfo?,
+    mode: ThemeUploadMode,
     state: ThemeUiState,
     busy: Boolean,
+    onModeChange: (ThemeUploadMode) -> Unit,
     onPick: () -> Unit,
+    onBuildWallpaper: () -> Unit,
     onUpload: () -> Unit,
     onCancel: () -> Unit,
     onRestartService: () -> Unit,
@@ -52,16 +58,41 @@ fun ThemePage(
     var confirmUpload by remember { mutableStateOf(false) }
 
     SectionCard(
-        title = "仪表主题",
-        helpText = "请选择外层主题 zip 包（内含 config.ini 与 package.zip）。上传前请确认 ThemeType / StartVersion 与当前车型匹配；上传期间会先停止投屏，建议提前备份原厂主题。",
+        title = "仪表主题与壁纸",
+        helpText = "请选择上传类型（仪表主题 THEME / 仪表壁纸 WALLPAPER）和外层 zip 包（内含 config.ini 与 package.zip）。上传期间会先停止投屏，建议提前备份原厂资源。",
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ThemeUploadMode.entries.forEach { item ->
+                FilterChip(
+                    selected = mode == item,
+                    onClick = { onModeChange(item) },
+                    enabled = !state.running && !busy,
+                    label = { Text("${item.label} (${item.func})") },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+
         Button(
             onClick = onPick,
             enabled = !state.running && !busy,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp),
-        ) { Text(if (pkg == null) "选择主题 zip" else "重新选择") }
+        ) { Text(if (pkg == null) "选择${mode.label} zip" else "重新选择") }
+
+        if (mode == ThemeUploadMode.WALLPAPER) {
+            OutlinedButton(
+                onClick = onBuildWallpaper,
+                enabled = !state.running && !busy,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+            ) { Text("从图片 / 视频一键制作壁纸包") }
+        }
 
         if (busy) {
             Row(
@@ -212,7 +243,7 @@ fun ThemePage(
     if (confirmUpload && pkg != null) {
         AlertDialog(
             onDismissRequest = { confirmUpload = false },
-            title = { Text("确认上传主题？") },
+            title = { Text("确认上传${mode.label}？") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -221,13 +252,14 @@ fun ThemePage(
                         fontSize = 14.sp,
                     )
                     Text(
-                        "ThemeType ${pkg.themeType.ifBlank { "—" }} · " +
+                        "协议：${mode.func} · " +
+                            "ThemeType ${pkg.themeType.ifBlank { "—" }} · " +
                             "StartVersion ${pkg.startVersion.ifBlank { "—" }}",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "上传会先停止投屏；主题和车机不匹配可能导致车机 UI 异常，请确认能回退。",
+                        "上传会先停止投屏；资源与车机不匹配可能导致车机 UI 异常，请确认能回退。",
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.error,

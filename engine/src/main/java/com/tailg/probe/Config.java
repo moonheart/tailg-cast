@@ -58,6 +58,14 @@ public final class Config {
     public int portDvr = 18888;
     public int portOta = 19000;
 
+    // 仪表互联（音乐 / 通知 / 来电 / 短信同步）
+    public boolean syncMusic = true;
+    public boolean syncNotify = true;
+    public boolean syncCall = true;
+    public boolean syncSms = true;
+    public String notifyApps = "com.tencent.mm,com.tencent.mobileqq";
+    public boolean rawCapture = false;
+
     // 云端（台铃服务端，需要登录 token；token 失效就在界面上重填）
     public String cloudToken = "";                 // authorization 头
     public String carImei = "";                    // 车机 4G 的 IMEI，远控指令用它定位车辆
@@ -94,6 +102,12 @@ public final class Config {
         cloudTokenCheckedAt = o.cloudTokenCheckedAt;
         carFrame = o.carFrame;
         cloudUid = o.cloudUid;
+        syncMusic = o.syncMusic;
+        syncNotify = o.syncNotify;
+        syncCall = o.syncCall;
+        syncSms = o.syncSms;
+        notifyApps = o.notifyApps;
+        rawCapture = o.rawCapture;
     }
 
     /** 改一项并写回 config.properties（其它项原样保留）。 */
@@ -185,6 +199,12 @@ public final class Config {
         c.carFrame = p.getProperty("carFrame", c.carFrame).trim();
         c.cloudUid = p.getProperty("cloudUid", c.cloudUid).trim();
         c.cloudBase = p.getProperty("cloudBase", c.cloudBase).trim();
+        c.syncMusic = !"0".equals(p.getProperty("syncMusic", "1"));
+        c.syncNotify = !"0".equals(p.getProperty("syncNotify", "1"));
+        c.syncCall = !"0".equals(p.getProperty("syncCall", "1"));
+        c.syncSms = !"0".equals(p.getProperty("syncSms", "1"));
+        c.notifyApps = p.getProperty("notifyApps", c.notifyApps).trim();
+        c.rawCapture = "1".equals(p.getProperty("rawCapture", "0"));
 
         if (!f.exists()) {
             try {

@@ -48,7 +48,7 @@ object ThemePackage {
                 it.name.endsWith(".zip", ignoreCase = true)
             } ?: throw IllegalArgumentException("外层 zip 里没有 package.zip")
 
-            val configFile = File(outDir, "config.ini")
+            val configFile = File(outDir, iniEntry.name.substringAfterLast('/'))
             val packageFile = File(outDir, pkgEntry.name.substringAfterLast('/'))
             copyEntry(zip, iniEntry.name, configFile)
             copyEntry(zip, pkgEntry.name, packageFile)
@@ -56,19 +56,23 @@ object ThemePackage {
             val ini = parseIni(configFile)
             val customName = ini["customname"].orEmpty().ifBlank {
                 ini["themename"].orEmpty().ifBlank {
-                    throw IllegalArgumentException("config.ini 里没有 CustomName/ThemeName")
+                    ini["wallpapername_zh_cn"].orEmpty().ifBlank {
+                        ini["wallpapername"].orEmpty().ifBlank {
+                            throw IllegalArgumentException("config.ini 里没有 CustomName/ThemeName/WallpaperName")
+                        }
+                    }
                 }
             }
-            val expectedMd5 = ini["md5"].orEmpty()
+            val expectedMd5 = ini["md5"].orEmpty().ifBlank { ini["packmd5"].orEmpty() }
             val actualMd5 = md5(packageFile)
             val matched = expectedMd5.isBlank() || actualMd5.equals(expectedMd5, ignoreCase = true)
 
             return ThemePackageInfo(
-                themeName = ini["themename"].orEmpty(),
+                themeName = ini["themename"].orEmpty().ifBlank { ini["wallpapername"].orEmpty() },
                 customName = customName,
                 customDesc = ini["customdesc"].orEmpty(),
                 customAuthor = ini["customauthor"].orEmpty(),
-                customVersion = ini["customversion"].orEmpty(),
+                customVersion = ini["customversion"].orEmpty().ifBlank { ini["version"].orEmpty() },
                 themeType = ini["themetype"].orEmpty(),
                 startVersion = ini["startversion"].orEmpty(),
                 md5 = expectedMd5,

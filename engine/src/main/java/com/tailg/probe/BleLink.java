@@ -176,6 +176,7 @@ public final class BleLink {
                 public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic c) {
                     byte[] v = c.getValue();
                     if (v == null) return;
+                    LogSink.raw("BLE", "RX", v);
                     onBytes(v);
                 }
             }, BluetoothDevice.TRANSPORT_LE);
@@ -277,6 +278,7 @@ public final class BleLink {
                     int n = Math.min(chunk, data.length - off);
                     byte[] part = new byte[n];
                     System.arraycopy(data, off, part, 0, n);
+                    LogSink.raw("BLE", "TX", part);
                     w.setValue(part);
                     g.writeCharacteristic(w);
                     Thread.sleep(40);   // 不 sleep 会丢包

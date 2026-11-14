@@ -1,10 +1,13 @@
 package com.tailg.cast.ui
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,6 +31,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import com.tailg.cast.CallStateMonitor
+import com.tailg.cast.CarNotificationService
 import com.tailg.cast.NavAccessibility
 import com.tailg.cast.PrivKitBridge
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +59,18 @@ fun PermissionsCenterPage(
     var batteryIgnored by remember { mutableStateOf(isIgnoringBattery(ctx)) }
     var a11yOn by remember { mutableStateOf(NavAccessibility.isEnabled(ctx)) }
     var enablingA11y by remember { mutableStateOf(false) }
+    var notifyListenerOn by remember { mutableStateOf(CarNotificationService.isEnabled(ctx)) }
+    var phonePermOk by remember { mutableStateOf(CallStateMonitor.hasPermission(ctx)) }
+
+    val phonePermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        phonePermOk = CallStateMonitor.hasPermission(ctx)
+        if (phonePermOk) {
+            CallStateMonitor.ensureStarted(ctx)
+            Toast.makeText(ctx, "来电监听权限已授予", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     fun refreshAll() {
         privConnected = PrivKitBridge.isConnected()
@@ -61,6 +78,9 @@ fun PermissionsCenterPage(
         basicOk = neededPermissions(ctx).isEmpty()
         batteryIgnored = isIgnoringBattery(ctx)
         a11yOn = NavAccessibility.isEnabled(ctx)
+        notifyListenerOn = CarNotificationService.isEnabled(ctx)
+        phonePermOk = CallStateMonitor.hasPermission(ctx)
+        if (phonePermOk) CallStateMonitor.ensureStarted(ctx)
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
@@ -198,6 +218,57 @@ fun PermissionsCenterPage(
                     .height(46.dp),
             ) {
                 Text("系统无障碍设置")
+            }
+        }
+    }
+
+    // 5. 仪表互联（音乐 / 通知 / 来电）
+    SectionCard(
+        title = "仪表互联（音乐 / 通知 / 来电）",
+        icon = Icons.Filled.Notifications,
+        helpText = "同步手机音乐歌词、微信/QQ通知与短信需要「通知使用权」；同步来电弹窗需要「电话状态」权限。",
+    ) {
+        StatusLine(
+            name = "通知使用权（音乐与通知同步）",
+            state = if (notifyListenerOn) "已开启" else "未开启",
+            ok = notifyListenerOn,
+        )
+        StatusLine(
+            name = "电话状态（来电弹窗同步）",
+            state = if (phonePermOk) "已授予" else "未授予",
+            ok = phonePermOk,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(
+                onClick = {
+                    runCatching {
+                        ctx.startActivity(
+                            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(46.dp),
+            ) {
+                Text(if (notifyListenerOn) "通知权限已开" else "开启通知使用权")
+            }
+            FilledTonalButton(
+                onClick = {
+                    phonePermLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.READ_PHONE_STATE,
+                            Manifest.permission.READ_CALL_LOG,
+                            Manifest.permission.READ_CONTACTS,
+                        )
+                    )
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(46.dp),
+            ) {
+                Text(if (phonePermOk) "来电权限已开" else "授权来电监听")
             }
         }
     }

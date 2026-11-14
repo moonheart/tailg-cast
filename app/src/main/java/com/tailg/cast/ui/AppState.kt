@@ -30,6 +30,12 @@ data class ConfigView(
     val cloudTokenCheckedAt: Long = 0,
     val carImei: String = "",
     val forgetCarWifi: Boolean = true,
+    val syncMusic: Boolean = true,
+    val syncNotify: Boolean = true,
+    val syncCall: Boolean = true,
+    val syncSms: Boolean = true,
+    val notifyApps: String = "com.tencent.mm,com.tencent.mobileqq",
+    val rawCapture: Boolean = false,
 ) {
     val contentHeight: Int get() = height - safeTop - safeBottom
 
@@ -55,6 +61,10 @@ data class AppSnapshot(
     val carMileage: Int = -1,
     val carTire: Int = -1,
     val carRide: String = "",
+    val frontTireSummary: String = "",
+    val rearTireSummary: String = "",
+    val tireMatchSummary: String = "",
+    val offlineMapSummary: String = "",
     val lastNavi: String = "",
     val lastJson: String = "",
     val lastCmd: String = "",
@@ -84,6 +94,10 @@ fun snapshot(ctx: Context, fallback: Config): AppSnapshot {
         carMileage = ProbeService.carMileage,
         carTire = ProbeService.carTire,
         carRide = ProbeService.carRide,
+        frontTireSummary = ProbeService.frontTireSummary,
+        rearTireSummary = ProbeService.rearTireSummary,
+        tireMatchSummary = ProbeService.tireMatchSummary,
+        offlineMapSummary = ProbeService.offlineMapSummary,
         lastNavi = ProbeService.lastNavi,
         lastJson = ProbeService.lastJson,
         lastCmd = ProbeService.lastCmdFunc,
@@ -114,6 +128,12 @@ fun Config.toView(): ConfigView = ConfigView(
     cloudTokenCheckedAt = cloudTokenCheckedAt,
     carImei = carImei,
     forgetCarWifi = forgetCarWifi,
+    syncMusic = syncMusic,
+    syncNotify = syncNotify,
+    syncCall = syncCall,
+    syncSms = syncSms,
+    notifyApps = notifyApps,
+    rawCapture = rawCapture,
 )
 
 

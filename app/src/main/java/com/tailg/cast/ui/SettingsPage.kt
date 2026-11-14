@@ -307,13 +307,32 @@ fun SettingsPage(
     }
 
     if (showLogs) {
+        var rawCap by remember(cfg.rawCapture) { mutableStateOf(cfg.rawCapture) }
         DetailDialog("运行日志", onClose = { showLogs = false }) {
             Text(
-                "目录：Android/data/com.tailg.cast/files/sessions",
+                "目录：Android/data/com.tailg.cast/files/sessions\n开启原始抓包后，Wi-Fi (17818/19000) 与蓝牙 BLE 的完整收发原始字节将全部落盘到 raw_packets.log。",
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            FilledTonalButton(
+                onClick = {
+                    val next = !rawCap
+                    rawCap = next
+                    com.tailg.probe.LogSink.rawCapture = next
+                    onSave("rawCapture", if (next) "1" else "0")
+                    Toast.makeText(
+                        ctx,
+                        if (next) "已开启 Wi-Fi & 蓝牙原始抓包 (raw_packets.log)" else "已关闭原始抓包",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+            ) {
+                Text(if (rawCap) "原始抓包：已开启（点击关闭）" else "原始抓包：已关闭（点击开启）")
+            }
             Button(
                 onClick = onShareLog,
                 modifier = Modifier

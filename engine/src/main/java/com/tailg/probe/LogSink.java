@@ -19,6 +19,8 @@ public final class LogSink {
     private static File sessionDir;
     private static PrintWriter txt;
     private static PrintWriter jsonl;
+    private static PrintWriter rawLog;
+    public static volatile boolean rawCapture = false;
 
     private LogSink() {}
 
@@ -34,9 +36,12 @@ public final class LogSink {
                     new FileOutputStream(new File(dir, "session.log"), true), "UTF-8"), true);
             jsonl = new PrintWriter(new OutputStreamWriter(
                     new FileOutputStream(new File(dir, "frames.jsonl"), true), "UTF-8"), true);
+            rawLog = new PrintWriter(new OutputStreamWriter(
+                    new FileOutputStream(new File(dir, "raw_packets.log"), true), "UTF-8"), true);
         } catch (IOException e) {
             txt = null;
             jsonl = null;
+            rawLog = null;
         }
         line("SESSION", "log dir = " + dir.getAbsolutePath());
         return dir;
@@ -76,7 +81,30 @@ public final class LogSink {
         synchronized (LOCK) {
             if (txt != null) { txt.flush(); txt.close(); txt = null; }
             if (jsonl != null) { jsonl.flush(); jsonl.close(); jsonl = null; }
+            if (rawLog != null) { rawLog.flush(); rawLog.close(); rawLog = null; }
         }
+    }
+
+    /** 原始抓包落盘（仅 rawCapture=true 时写入 raw_packets.log，未截断、未去重）。 */
+    public static void raw(String channel, String dir, byte[] data) {
+        if (!rawCapture || data == null) return;
+        StringBuilder ascii = new StringBuilder(Math.min(data.length, 256));
+        for (int i = 0; i < data.length && i < 256; i++) {
+            int c = data[i] & 0xFF;
+            ascii.append((c >= 32 && c < 127) ? (char) c : '.');
+        }
+        String line = TS.format(new Date()) + " [" + channel + " " + dir + " len=" + data.length + "] "
+                + hex(data, data.length) + " | " + ascii;
+        synchronized (LOCK) {
+            if (rawLog != null) rawLog.println(line);
+        }
+    }
+
+    /** 原始帧抓包（还原 EE FD / type cmd len 帧结构后的完整 hex）。 */
+    public static void rawFrame(String channel, String dir, int type, int cmd, byte[] payload) {
+        if (!rawCapture) return;
+        byte[] frame = Codec.frame(type, cmd, payload);
+        raw(channel, dir, frame);
     }
 
     public static String hex(byte[] b, int len) {
