@@ -39,6 +39,7 @@ public final class CastEngine {
     private Surface inputSurface;
     private VirtualDisplay virtualDisplay;
     private GlScaler scaler;
+    private CarlifeBridge carlifeBridge;
     private int vdContentH = 600;   // 虚拟屏实际内容高度（安全区时为 castHeight-safeTop-safeBottom）
     private Thread drainThread;
 
@@ -96,6 +97,12 @@ public final class CastEngine {
 
     /** 指定 display 的点击，避免自动导航窗口和当前投屏屏号不一致时点错屏。 */
     public void injectTapOn(final int id, final int x, final int y) {
+        final CarlifeBridge cb = carlifeBridge;
+        if (cb != null) {
+            cb.sendTouch(0, x, y);
+            cb.sendTouch(1, x, y);
+            return;
+        }
         final IVdHelper h = helper;
         if (h != null && id > 0) {
             try {
@@ -132,6 +139,20 @@ public final class CastEngine {
 
     /** 流式触摸：action 直接用 MotionEvent.ACTION_*，每次移动都调一次。 */
     public void touch(final int action, final int x, final int y) {
+        final CarlifeBridge cb = carlifeBridge;
+        if (cb != null) {
+            int carAct;
+            if (action == android.view.MotionEvent.ACTION_DOWN) carAct = 0;
+            else if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_CANCEL) carAct = 1;
+            else if (action == android.view.MotionEvent.ACTION_MOVE) carAct = 2;
+            else return;
+            int cw = Math.max(1, cfg.castWidth);
+            int ch = Math.max(1, cfg.castHeight);
+            int cx = x * cb.videoWidth() / cw;
+            int cy = y * cb.videoHeight() / ch;
+            cb.sendTouch(carAct, cx, cy);
+            return;
+        }
         final int id = displayId();
         final IVdHelper h = helper;
         if (h != null && id > 0) {
@@ -295,7 +316,14 @@ public final class CastEngine {
         @Override
         public void run() {
             try {
-                os.write(videoHeader(cfg.castWidth, cfg.castHeight));
+                int vw = cfg.castWidth;
+                int vh = cfg.castHeight;
+                CarlifeBridge cb = carlifeBridge;
+                if (cb != null) {
+                    vw = cb.videoWidth();
+                    vh = cb.videoHeight();
+                }
+                os.write(videoHeader(vw, vh));
                 byte[] c = codecConfig;
                 if (c != null) os.write(c);
                 byte[] k = lastKey;
@@ -369,6 +397,32 @@ public final class CastEngine {
         frames = 0;
         bytes = 0;
         dropped = 0;
+        if (cfg.carlifeMode) {
+            running = true;
+            codecConfig = null;
+            lastKey = null;
+            lastKeyAt = 0L;
+            carlifeBridge = new CarlifeBridge(cfg.castWidth, cfg.castHeight, cfg.castFps,
+                    new CarlifeBridge.Callback() {
+                        @Override
+                        public void onState(String s) {
+                            state(s);
+                        }
+
+                        @Override
+                        public void onH264Frame(byte[] nalu) {
+                            pushExternalH264(nalu);
+                        }
+                    },
+                    () -> {
+                        ensureOcarCarlifeWithRoot();
+                        return kotlin.Unit.INSTANCE;
+                    });
+            carlifeBridge.start();
+            state("CarLife 连接中…");
+            LogSink.line("CAST", "已启动 CarLife 车联转发模式 (" + cfg.castWidth + "x" + cfg.castHeight + ")");
+            return;
+        }
         if (cfg.carMode) {
             boolean ok = RootShell.applyCarRatio(cfg.carWidth, cfg.carHeight, cfg.carDensity);
             LogSink.line("CAST", "车机比例 " + cfg.carWidth + "x" + cfg.carHeight + " @" + cfg.carDensity
@@ -627,7 +681,10 @@ public final class CastEngine {
             public void run() {
                 String pkg = cfg.appDisplayPkg;
                 String comp = compArg();
-                String startArg = comp != null ? "-n " + comp : "-p " + pkg;
+                String carUiArg = carUiLaunchArg();
+                String startArg = carUiArg != null
+                        ? carUiArg
+                        : (comp != null ? "-n " + comp : "-p " + pkg);
                 try {
                     if (cfg.appDisplayMove) {
                         // freeform 小窗不受应用方向请求约束：搬到虚拟屏后 resize 拉满，
@@ -984,10 +1041,31 @@ public final class CastEngine {
     }
 
     /** 直接全屏启动到虚拟屏，并等它变成横屏铺满；失败返回 false。 */
+    private String carUiLaunchArg() {
+        if (!cfg.amapCarUi) return null;
+        if ("com.autonavi.minimap".equals(cfg.appDisplayPkg)) {
+            return "-a samsung.intent.action.carlink.kit"
+                    + " -n com.autonavi.minimap/com.autonavi.map.activity.UcarSplashActivity";
+        }
+        if ("com.baidu.BaiduMap".equals(cfg.appDisplayPkg)) {
+            return "-a vivo.intent.action.carlink.kit -c vivo.intent.category.carlink.kit"
+                    + " -n com.baidu.BaiduMap/com.baidu.hicar.HiCarWelcomeScreen";
+        }
+        return null;
+    }
+
+    private boolean launchOnDisplay(int vdId, String component) throws android.os.RemoteException {
+        String carUi = carUiLaunchArg();
+        if (carUi != null) {
+            return RootShell.run("am start --display " + vdId + " --windowingMode 1 " + carUi).ok;
+        }
+        return helper.launch(vdId, component);
+    }
+
     private boolean tryDirectLaunch(int vdId, String component) {
         try {
             // 先不动已经在跑的高德：launch 会把已有任务带到目标屏，导航不会丢。
-            boolean launched = helper.launch(vdId, component);
+            boolean launched = launchOnDisplay(vdId, component);
             LogSink.line("CAST", "直接启动: " + (launched ? "ok" : "fail")
                     + " display=" + vdId);
             if (launched && waitLayout(vdId, 4000)) return true;
@@ -996,7 +1074,7 @@ public final class CastEngine {
             LogSink.line("CAST", "直接启动未铺满，force-stop 后重试");
             RootShell.run("am force-stop " + cfg.appDisplayPkg);
             sleepMs(300);
-            launched = helper.launch(vdId, component);
+            launched = launchOnDisplay(vdId, component);
             LogSink.line("CAST", "直接启动重试: " + (launched ? "ok" : "fail"));
             return launched && waitLayout(vdId, 4000);
         } catch (Throwable t) {
@@ -1252,6 +1330,46 @@ public final class CastEngine {
         dump = null;
     }
 
+    private void pushExternalH264(byte[] nalu) {
+        if (!running || nalu == null || nalu.length < 5) return;
+        boolean hasSpsPps = false;
+        boolean isKey = false;
+        int firstIdrOffset = -1;
+        int limit = Math.min(nalu.length, 4096);
+        for (int i = 0; i + 4 < limit; i++) {
+            if (nalu[i] == 0 && nalu[i + 1] == 0) {
+                int sc = 0;
+                if (nalu[i + 2] == 1) sc = 3;
+                else if (nalu[i + 2] == 0 && i + 4 < nalu.length && nalu[i + 3] == 1) sc = 4;
+                if (sc > 0) {
+                    int t = nalu[i + sc] & 0x1F;
+                    if (t == 7 || t == 8) hasSpsPps = true;
+                    if (t == 5) {
+                        isKey = true;
+                        if (firstIdrOffset < 0) firstIdrOffset = i;
+                    }
+                }
+            }
+        }
+        if (hasSpsPps && !isKey) {
+            codecConfig = nalu;
+            dumpWrite(nalu);
+            broadcast(nalu, false);
+            return;
+        }
+        if (hasSpsPps && firstIdrOffset > 0) {
+            codecConfig = java.util.Arrays.copyOf(nalu, firstIdrOffset);
+        }
+        frames++;
+        if (isKey) {
+            lastKey = nalu;
+            lastKeyAt = System.currentTimeMillis();
+        }
+        lastFrame = nalu;
+        dumpWrite(nalu);
+        broadcast(nalu, isKey);
+    }
+
     private void broadcast(byte[] nal, boolean keyFrame) {
         PreviewSink ps = previewSink;
         if (ps != null) {
@@ -1331,6 +1449,17 @@ public final class CastEngine {
 
     /** 强制关键帧，方便中途接入的接收端立刻出画面。 */
     public void requestKeyFrame() {
+        if (carlifeBridge != null) {
+            PreviewSink ps = previewSink;
+            byte[] k = lastKey;
+            if (ps != null && k != null) {
+                try {
+                    ps.onFrame(k, true);
+                } catch (Throwable ignored) {
+                }
+            }
+            return;
+        }
         try {
             if (codec != null && Build.VERSION.SDK_INT >= 19) {
                 android.os.Bundle b = new android.os.Bundle();
@@ -1341,9 +1470,26 @@ public final class CastEngine {
         }
     }
 
+    private void ensureOcarCarlifeWithRoot() {
+        String cmd = "CAR_ID=$(sed -n 's/.*name=\"\\([0-9A-Fa-f:]\\{17\\}\\)\".*/\\1/p'"
+                + " /data/user/0/com.oplus.ocar/shared_prefs/auto_connect_data.xml | head -n 1); "
+                + "am start -a oplus.intent.action.START_CAR_CONNECT"
+                + " -n com.oplus.ocar/.settings.connect.union.CarUnionConnectRouteActivity"
+                + " --es carId \"${CAR_ID:-F8:00:0A:D3:80:00}\"";
+        RootShell.Result r = RootShell.runSu(cmd);
+        LogSink.line("CARLIFE", "su 拉起 START_CAR_CONNECT: ok=" + r.ok + " out=" + r.out);
+    }
+
     public synchronized void stop() {
-        if (!running && codec == null) return;
+        if (!running && codec == null && carlifeBridge == null) return;
         running = false;
+        if (carlifeBridge != null) {
+            try {
+                carlifeBridge.stop();
+            } catch (Throwable ignored) {
+            }
+            carlifeBridge = null;
+        }
         NavAutoState.disarm();
         dumpClose();
         try {

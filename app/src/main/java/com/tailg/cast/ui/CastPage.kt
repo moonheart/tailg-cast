@@ -75,6 +75,8 @@ fun CastPage(
     onStartCast: () -> Unit,
     onStartServiceAndCast: () -> Unit,
     onStopCast: () -> Unit,
+    onCarlifeMode: (Boolean) -> Unit,
+    onAmapCarUi: (Boolean) -> Unit,
     onHeight: (Int) -> Unit,
     onBitrate: (Int) -> Unit,
     onFps: (Int) -> Unit,
@@ -90,6 +92,8 @@ fun CastPage(
     var bitrateSamples by remember { mutableStateOf(emptyList<Pair<Long, Long>>()) }
     var bitrateKbps by remember { mutableStateOf(0L) }
     var showQuality by remember { mutableStateOf(false) }
+    var previewZoom by remember { mutableStateOf(1f) }
+    var previewPanX by remember { mutableStateOf(0.5f) }
 
     var favorites by remember { mutableStateOf(NavFavorites.list(ctx)) }
     var activeFavId by remember { mutableStateOf(NavFavorites.activeId(ctx)) }
@@ -182,6 +186,51 @@ fun CastPage(
         }
     }
 
+    if (snap.casting) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ChipRow(
+                    options = listOf("1x 全览", "1.6x 放大"),
+                    selected = if (previewZoom > 1.05f) "1.6x 放大" else "1x 全览",
+                ) { picked ->
+                    previewZoom = if (picked == "1.6x 放大") 1.6f else 1f
+                }
+                if (previewZoom > 1.05f) {
+                    ChipRow(
+                        options = listOf("左", "中", "右"),
+                        selected = when {
+                            previewPanX < 0.25f -> "左"
+                            previewPanX > 0.75f -> "右"
+                            else -> "中"
+                        },
+                    ) { picked ->
+                        previewPanX = when (picked) {
+                            "左" -> 0f
+                            "右" -> 1f
+                            else -> 0.5f
+                        }
+                    }
+                }
+            }
+            EmbeddedMirrorPreview(
+                dispW = cfg.width,
+                dispH = cfg.height,
+                contentTop = if (cfg.carlifeMode) 0 else cfg.safeTop,
+                contentH = if (cfg.carlifeMode) cfg.height else cfg.contentHeight,
+                zoom = previewZoom,
+                panX = previewPanX,
+                showBadge = false,
+            )
+        }
+    }
+
     // 1. 骑行投屏主控台（Gradient Hero Card）
     val heroColors = when {
         snap.casting -> listOf(Color(0xFF0F766E), Color(0xFF0EA5E9))
@@ -217,6 +266,7 @@ fun CastPage(
                     )
                     Text(
                         when {
+                            snap.casting && cfg.carlifeMode -> "CarLife 车联 · ${cfg.fps} fps"
                             snap.casting -> "${NavFavorites.shortLabelFor(mapProvider)}导航 · ${cfg.width}×${cfg.contentHeight} · ${cfg.fps} fps"
                             snap.serviceRunning -> "车机已就绪，可随时开始投屏"
                             else -> "将${NavFavorites.shortLabelFor(mapProvider)}导航投射到车机仪表"
@@ -254,12 +304,6 @@ fun CastPage(
                         Modifier.weight(1f),
                     )
                 }
-                EmbeddedMirrorPreview(
-                    dispW = cfg.width,
-                    dispH = cfg.height,
-                    contentTop = cfg.safeTop,
-                    contentH = cfg.contentHeight,
-                )
             }
 
             when {
@@ -380,6 +424,46 @@ fun CastPage(
                 }
             }
         }
+    }
+
+    // 1.5 CarLife 车联转发模式
+    SectionCard(
+        title = "CarLife 车联模式",
+        subtitle = if (cfg.carlifeMode) {
+            "已启用：已 Root 自动拉起 Car+；未 Root 需先在 Car+ 手动点去连接"
+        } else {
+            "接收本机 CarLife (127.0.0.1:7240) 转发给台铃（可选 Root 自动拉起）"
+        },
+        icon = Icons.Filled.PlayArrow,
+        helpText = "有两种启动方式：\n" +
+            "1) 已 Root（推荐）：在 KernelSU/Magisk 给本 App 授权后，直接点「开始投屏」，会自动拉起 Car+ 车联并转发画面。\n" +
+            "2) 未 Root：受系统签名权限（CAR_LINK）限制，第三方 App 无法自动拉起或直跳 Car+ 连接页，需先手动到系统「设置 → 连接与共享 → Car+ 车联」点「去连接（百度 CarLife+）」，再切回点「开始投屏」（免 Root 全自动建议使用默认的虚拟屏 + Shizuku 模式）。",
+        action = {
+            Switch(
+                checked = cfg.carlifeMode,
+                onCheckedChange = onCarlifeMode,
+            )
+        },
+    ) {}
+
+    // 1.6 导航精简车机版（UCar / CarLink 入口，高德 & 百度均支持）
+    if (!cfg.carlifeMode) {
+        SectionCard(
+            title = "导航精简车机版 (UCar)",
+            subtitle = if (cfg.amapCarUi) {
+                "已启用：高德 / 百度均以精简车机界面启动（无广告/大地图）"
+            } else {
+                "用精简车机界面启动高德 / 百度地图（免 Root / 免 Car+）"
+            },
+            icon = Icons.Filled.LocationOn,
+            helpText = "开启后，虚拟屏模式会调用高德（UcarSplashActivity）或百度（HiCarWelcomeScreen）内置的精简车机入口，画面只有地图与大按钮，没有手机版广告和底部栏。",
+            action = {
+                Switch(
+                    checked = cfg.amapCarUi,
+                    onCheckedChange = onAmapCarUi,
+                )
+            },
+        ) {}
     }
 
     // 2. 快捷出发（导航地图、目的地与自动导航）

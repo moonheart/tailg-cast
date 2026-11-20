@@ -73,6 +73,7 @@ import com.tailg.cast.PrivKitBridge
 import com.tailg.cast.ShizukuBridge
 import com.tailg.cast.VehicleStatus
 import com.tailg.cast.theme.ThemeServer
+import com.tailg.cast.theme.ThemeServerAction
 import com.tailg.cast.theme.ThemeUploadMode
 import com.tailg.probe.BleLink
 import com.tailg.probe.CarCmd
@@ -410,6 +411,50 @@ fun CastApp() {
         }
     }
 
+    fun startThemeToolAction(action: ThemeServerAction, mode: ThemeUploadMode, label: String) {
+        themeServerRef[0]?.stop()
+        themeServerRef[0] = null
+        themeState = ThemeUiState(running = true, status = "准备$label…")
+
+        val begin = {
+            val server = ThemeServer(ctx, null, mode, themeListener(), action = action)
+            themeServerRef[0] = server
+            server.start()
+        }
+
+        if (ProbeService.running) {
+            toast(ctx, "已停止投屏，准备$label")
+            ctx.stopService(Intent(ctx, ProbeService::class.java))
+            Handler(Looper.getMainLooper()).postDelayed({ begin() }, 800)
+        } else {
+            begin()
+        }
+    }
+
+    fun buildTinyPlaceholderWallpaper() {
+        themeBusy = true
+        Thread {
+            try {
+                val dir = File(ctx.cacheDir, "wallpaper_tiny").apply { deleteRecursively(); mkdirs() }
+                val outZip = File(dir, "tiny_wallpaper.zip")
+                WallpaperBuilder.buildTinyPlaceholder(outZip, File(dir, "work"))
+                val info = ThemePackage.extract(outZip, File(dir, "out"))
+                Handler(Looper.getMainLooper()).post {
+                    themeMode = ThemeUploadMode.WALLPAPER
+                    themePkg = info
+                    themeBusy = false
+                    themeState = ThemeUiState(status = "已生成 ~1KB 占位壁纸包，点「开始上传」即可覆盖释放空间")
+                    toast(ctx, "已生成极小占位壁纸包")
+                }
+            } catch (t: Throwable) {
+                Handler(Looper.getMainLooper()).post {
+                    themeBusy = false
+                    toast(ctx, "生成失败：${t.message}")
+                }
+            }
+        }.start()
+    }
+
     fun stopThemeUpload() {
         themeServerRef[0]?.stop()
         themeServerRef[0] = null
@@ -487,6 +532,29 @@ fun CastApp() {
         save("castFps", v.toString())
         ProbeService.config?.castFps = v
         if (snap.casting) restartCast() else toast(ctx, "帧率 $v fps")
+    }
+
+    fun applyCarlifeMode(enabled: Boolean) {
+        save("carlifeMode", if (enabled) "1" else "0")
+        ProbeService.config?.carlifeMode = enabled
+        cfg = Config.load(ctx)
+        snap = snapshot(ctx, cfg)
+        if (snap.casting) {
+            restartCast()
+        } else {
+            toast(ctx, if (enabled) "已切到 CarLife 车联转发模式" else "已切回虚拟屏投屏模式")
+        }
+    }
+
+    fun applyAmapCarUi(enabled: Boolean) {
+        save("amapCarUi", if (enabled) "1" else "0")
+        ProbeService.config?.amapCarUi = enabled
+        cfg = Config.load(ctx)
+        snap = snapshot(ctx, cfg)
+        toast(ctx, if (enabled) "已开启高德精简车机版 (UCar)" else "已切回高德标准版")
+        if (snap.casting && !snap.cfg.carlifeMode) {
+            restartCast()
+        }
     }
 
     fun setBackend(backend: String) {
@@ -849,6 +917,27 @@ fun CastApp() {
                         startProbeService(ctx)
                         themeState = themeState.copy(done = false, status = "已重新启动监听")
                     },
+                    onCheckAndClean = {
+                        startThemeToolAction(ThemeServerAction.CLEANUP, themeMode, "空间诊断与残留清理")
+                    },
+                    onBuildTinyWallpaper = ::buildTinyPlaceholderWallpaper,
+                    onOverwriteThemeStaging = {
+                        startThemeToolAction(
+                            ThemeServerAction.OVERWRITE_THEME_STAGING,
+                            ThemeUploadMode.THEME,
+                            "覆盖清理 THEME 暂存区",
+                        )
+                    },
+                    onOverwriteWallpaperStaging = {
+                        startThemeToolAction(
+                            ThemeServerAction.OVERWRITE_WALLPAPER_STAGING,
+                            ThemeUploadMode.WALLPAPER,
+                            "覆盖清理 WALLPAPER 暂存区",
+                        )
+                    },
+                    onCleanNaviCache = {
+                        startThemeToolAction(ThemeServerAction.CLEAN_NAVI_CACHE, themeMode, "清理车机导航缓存")
+                    },
                 )
 
                 SubPage.Nav -> NavPage(
@@ -877,6 +966,10 @@ fun CastApp() {
                     onStartService = { startProbeService(ctx) },
                     onStopService = { ctx.stopService(Intent(ctx, ProbeService::class.java)) },
                     onStartCast = {
+                        if (snap.cfg.carlifeMode) {
+                            toast(ctx, "CarLife 车联转发模式")
+                            Thread { ProbeService.startCast(-1, null) }.start()
+                        } else {
                         val backend = snap.cfg.backend
                         if (PrivKitBridge.isConnected()) {
                             toast(ctx, "priv-kit 虚拟屏投屏")
@@ -894,10 +987,11 @@ fun CastApp() {
                             toast(ctx, if (backend == "shizuku") "Shizuku 虚拟屏投屏" else "root 虚拟屏投屏")
                             Thread { ProbeService.startCast(-1, null) }.start()
                         }
+                        }
                     },
                     onStartServiceAndCast = {
                         val backend = snap.cfg.backend
-                        if (!PrivKitBridge.isConnected() && backend == "shizuku" && !shizukuGranted) {
+                        if (!snap.cfg.carlifeMode && !PrivKitBridge.isConnected() && backend == "shizuku" && !shizukuGranted) {
                             if (shizukuReady) {
                                 toast(ctx, "先授权 Shizuku")
                                 ShizukuBridge.requestPermission()
@@ -922,6 +1016,8 @@ fun CastApp() {
                         }
                     },
                     onStopCast = { Thread { ProbeService.cast?.stop() }.start() },
+                    onCarlifeMode = ::applyCarlifeMode,
+                    onAmapCarUi = ::applyAmapCarUi,
                     onHeight = ::applyHeight,
                     onBitrate = ::applyBitrate,
                     onFps = ::applyFps,

@@ -38,6 +38,11 @@ public final class RootShell {
         return exec(cmd, shown);
     }
 
+    /** 强制走 su（uid=0），不走 Shizuku（某些系统权限接口需要真 root）。 */
+    public static Result runSu(String cmd) {
+        return execSu(cmd, cmd);
+    }
+
     private static Result exec(String cmd, String shown) {
         Executor e = sExecutor;
         if (e != null) {
@@ -48,6 +53,10 @@ public final class RootShell {
                 return new Result(false, String.valueOf(t));
             }
         }
+        return execSu(cmd, shown);
+    }
+
+    private static Result execSu(String cmd, String shown) {
         Process p = null;
         try {
             p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});

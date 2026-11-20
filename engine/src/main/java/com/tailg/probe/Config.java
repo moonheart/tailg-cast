@@ -39,6 +39,8 @@ public final class Config {
     public boolean castProfileHigh = true;   // 官方会设 profile=8(High)/level=4096，失败自动回退
     public boolean useVdHelper = false;      // true=用助手调 DisplayManager 建屏（不要投影授权弹窗）
     public boolean useShizuku = false;       // true=助手由 Shizuku 以 shell/root 身份启动；false=su
+    public boolean carlifeMode = false;      // true=从本机 CarLife (127.0.0.1:7240/8240) 收 H.264 零重编码转发给台铃
+    public boolean amapCarUi = false;        // true=用 UCar 精简车机模式启动高德 (UcarSplashActivity)
     public int castWidth = 1024;
     public int castHeight = 600;
     public int castFps = 30;
@@ -173,6 +175,8 @@ public final class Config {
         c.castProfileHigh = "1".equals(p.getProperty("castProfileHigh", c.castProfileHigh ? "1" : "0"));
         c.useVdHelper = "1".equals(p.getProperty("useVdHelper", c.useVdHelper ? "1" : "0"));
         c.useShizuku = "1".equals(p.getProperty("useShizuku", c.useShizuku ? "1" : "0"));
+        c.carlifeMode = "1".equals(p.getProperty("carlifeMode", c.carlifeMode ? "1" : "0"));
+        c.amapCarUi = "1".equals(p.getProperty("amapCarUi", c.amapCarUi ? "1" : "0"));
         // UI 已移除 MediaProjection；旧配置里的 useVdHelper=0 迁移到助手模式。
         c.useVdHelper = true;
         c.castWidth = parseInt(p.getProperty("castWidth"), c.castWidth);
