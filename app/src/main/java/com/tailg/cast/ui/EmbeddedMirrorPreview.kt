@@ -6,10 +6,12 @@ import android.view.Surface
 import android.view.TextureView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -41,6 +43,9 @@ fun EmbeddedMirrorPreview(
     contentTop: Int,
     contentH: Int,
     modifier: Modifier = Modifier,
+    zoom: Float = 1f,
+    panX: Float = 0.5f,
+    showBadge: Boolean = false,
 ) {
     val safeW = dispW.coerceAtLeast(1)
     val safeH = dispH.coerceAtLeast(1)
@@ -90,16 +95,30 @@ fun EmbeddedMirrorPreview(
         }
     }
 
-    Box(
+    val safeZoom = zoom.coerceIn(1f, 2.5f)
+    val safePan = panX.coerceIn(0f, 1f)
+
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(aspect)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(Color.Black),
     ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { context ->
+        val baseH = maxWidth / aspect
+        val viewW = maxWidth * safeZoom
+        val viewH = baseH * safeZoom
+        val offsetX = -(viewW - maxWidth) * safePan
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(viewH),
+        ) {
+            AndroidView(
+                modifier = Modifier
+                    .requiredWidth(viewW)
+                    .height(viewH)
+                    .offset(x = offsetX),
+                factory = { context ->
                 var lastMoveAt = 0L
                 TextureView(context).apply {
                     isOpaque = true
@@ -170,19 +189,22 @@ fun EmbeddedMirrorPreview(
             },
         )
 
-        Surface(
-            shape = RoundedCornerShape(50),
-            color = Color.Black.copy(alpha = 0.55f),
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(8.dp),
-        ) {
-            Text(
-                "实时画面 · 可直接触控",
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                fontSize = 10.sp,
-                color = Color.White.copy(alpha = 0.9f),
-            )
+        if (showBadge) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color.Black.copy(alpha = 0.55f),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp),
+            ) {
+                Text(
+                    "实时画面 · 可直接触控",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    fontSize = 10.sp,
+                    color = Color.White.copy(alpha = 0.9f),
+                )
+            }
+        }
         }
     }
 }

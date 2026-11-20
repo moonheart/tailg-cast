@@ -58,6 +58,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
+/** 添加收藏点时的名称：备注优先，其次搜索到的地点名，最后用序号兜底。 */
+internal fun favoriteDisplayName(note: String, placeName: String, index: Int): String {
+    val n = note.trim()
+    if (n.isNotEmpty()) return n
+    val p = placeName.trim()
+    if (p.isNotEmpty()) return p
+    return "收藏点 $index"
+}
+
 @Composable
 fun NavPage(
     mapProvider: String = NavFavorites.MAP_AMAP,
@@ -93,6 +102,7 @@ fun NavPage(
     var editAddr by remember { mutableStateOf("") }
     var editCoordType by remember { mutableStateOf(0) }
     var mapOpen by remember { mutableStateOf(false) }
+    var mapMode by remember { mutableStateOf("edit") }
     var mapLat by remember { mutableStateOf(30.659) }
     var mapLon by remember { mutableStateOf(104.065) }
 
@@ -121,13 +131,36 @@ fun NavPage(
     }
 
     fun openAddFavorite() {
+        // 添加收藏点直接进地图选点，不再让用户手填经纬度。
         editingFav = null
-        editName = ""
-        editLat = ""
-        editLon = ""
-        editAddr = ""
-        editCoordType = 0
-        editorOpen = true
+        mapMode = "add"
+        val anchor = favorites.firstOrNull { it.id == activeFavId } ?: favorites.firstOrNull()
+        mapLat = anchor?.lat ?: 30.659
+        mapLon = anchor?.lon ?: 104.065
+        mapOpen = true
+    }
+
+    fun addFavoriteFromMap(
+        lat: Double,
+        lon: Double,
+        placeName: String,
+        address: String,
+        note: String,
+    ) {
+        val name = favoriteDisplayName(note, placeName, favorites.size + 1)
+        val f = NavFavorites.Favorite()
+        f.name = name
+        f.lat = lat
+        f.lon = lon
+        f.dev = 0
+        f.address = address.trim()
+        NavFavorites.save(ctx, f)
+        // 刚添加的收藏点通常就是这次要去的终点，直接设为当前目的地。
+        if (f.id.isNotBlank()) NavFavorites.setActive(ctx, f.id)
+        reloadNav()
+        mapOpen = false
+        val shown = if (name.length > 14) name.take(14) + "…" else name
+        Toast.makeText(ctx, "已添加收藏点「$shown」", Toast.LENGTH_SHORT).show()
     }
 
     fun openEditFavorite(f: NavFavorites.Favorite) {
@@ -200,8 +233,10 @@ fun NavPage(
     }
 
     fun openMapPicker() {
-        mapLat = editLat.toDoubleOrNull() ?: favorites.firstOrNull()?.lat ?: 30.659
-        mapLon = editLon.toDoubleOrNull() ?: favorites.firstOrNull()?.lon ?: 104.065
+        mapMode = "edit"
+        val anchor = favorites.firstOrNull { it.id == activeFavId } ?: favorites.firstOrNull()
+        mapLat = editLat.toDoubleOrNull() ?: anchor?.lat ?: 30.659
+        mapLon = editLon.toDoubleOrNull() ?: anchor?.lon ?: 104.065
         mapOpen = true
     }
 
@@ -284,7 +319,7 @@ fun NavPage(
     SectionCard(
         title = "常用目的地",
         icon = Icons.Filled.LocationOn,
-        helpText = "高德或百度地图地点详情复制的坐标为 GCJ-02，手机 GPS 原始坐标为 WGS-84。建议直接使用「在地图上选点」。",
+        helpText = "添加收藏点会直接打开地图：搜索地名/地址或点地图选点，备注会作为收藏点名称。地图坐标按 GCJ-02 保存。",
         action = {
             IconButton(onClick = { reloadNav() }) {
                 Icon(Icons.Filled.Refresh, contentDescription = "刷新")
@@ -292,7 +327,7 @@ fun NavPage(
         },
     ) {
         if (favorites.isEmpty()) {
-            EmptyHint("还没有收藏点。点下方「添加收藏点」填名称和经纬度，或直接在地图上选点。")
+            EmptyHint("还没有收藏点。点下方「添加收藏点」，在地图上搜索或点选位置，填个备注即可。")
         } else {
             favorites.forEach { f ->
                 val isSelected = f.id == activeFavId
@@ -387,7 +422,7 @@ fun NavPage(
                     }
                     SettingField("备注/地址", editAddr, { editAddr = it }, "可选")
                     Text(
-                        "从高德或百度地点详情复制坐标，或点「粘贴坐标」从剪贴板解析。GCJ-02 选高德/百度；手机 GPS 原始坐标选 WGS-84。地址解析依赖系统 geocoder，国产 ROM 可能不可用。",
+                        "从高德或百度地点详情复制坐标，或点「粘贴坐标」从剪贴板解析。GCJ-02 选高德/百度；手机 GPS 原始坐标选 WGS-84。地址解析依赖系统 geocoder，国产 ROM 可能不可用；也可以点「在地图上选点」直接搜索地址。",
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -414,15 +449,26 @@ fun NavPage(
     }
 
     if (mapOpen) {
+        val addMode = mapMode == "add"
         MapPickerDialog(
             initialLat = mapLat,
             initialLon = mapLon,
-            onPick = { lat, lon ->
-                editLat = String.format(Locale.US, "%.6f", lat)
-                editLon = String.format(Locale.US, "%.6f", lon)
-                editCoordType = 0
-                mapOpen = false
-                Toast.makeText(ctx, "已选点，坐标按 GCJ-02 填", Toast.LENGTH_SHORT).show()
+            initialNote = "",
+            title = if (addMode) "添加收藏点" else "地图选点",
+            confirmLabel = if (addMode) "保存收藏点" else "使用此点",
+            requirePick = addMode,
+            onPick = { lat, lon, placeName, address, note ->
+                if (addMode) {
+                    addFavoriteFromMap(lat, lon, placeName, address, note)
+                } else {
+                    editLat = String.format(Locale.US, "%.6f", lat)
+                    editLon = String.format(Locale.US, "%.6f", lon)
+                    editCoordType = 0
+                    if (note.isNotBlank()) editAddr = note
+                    else if (placeName.isNotBlank()) editAddr = address
+                    mapOpen = false
+                    Toast.makeText(ctx, "已选点，坐标按 GCJ-02 填", Toast.LENGTH_SHORT).show()
+                }
             },
             onDismiss = { mapOpen = false },
         )
