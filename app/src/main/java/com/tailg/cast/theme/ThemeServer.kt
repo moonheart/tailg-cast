@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.tailg.probe.Config
+import com.tailg.probe.LogSink
 import com.tailg.probe.ProbeService
 import com.tailg.probe.RootShell
 import com.tailg.protocol.Codec
@@ -36,6 +37,14 @@ enum class ThemeUploadMode(val func: String, val label: String) {
     WALLPAPER("WALLPAPER", "仪表壁纸"),
 }
 
+enum class ThemeServerAction {
+    UPLOAD,
+    CLEANUP,
+    OVERWRITE_THEME_STAGING,
+    OVERWRITE_WALLPAPER_STAGING,
+    CLEAN_NAVI_CACHE,
+}
+
 /**
  * 主题/壁纸上传服务：17818 控制 + 19000 文件（$FILE）。
  *
@@ -47,9 +56,10 @@ enum class ThemeUploadMode(val func: String, val label: String) {
  */
 class ThemeServer(
     private val ctx: Context,
-    private val pkg: ThemePackageInfo,
+    private val pkg: ThemePackageInfo?,
     private val mode: ThemeUploadMode,
     private val listener: Listener,
+    private val action: ThemeServerAction = ThemeServerAction.UPLOAD,
 ) {
 
     interface Listener {
@@ -65,7 +75,7 @@ class ThemeServer(
     private enum class FileResult { NEXT_FILE, DONE_ALL }
 
     private val config: Config = Config.load(ctx)
-    private val totalBytes: Long = pkg.configFile.length() + pkg.packageFile.length()
+    private val totalBytes: Long = if (pkg != null) pkg.configFile.length() + pkg.packageFile.length() else 0L
     private val sent = AtomicLong(0)
 
     @Volatile
@@ -91,6 +101,7 @@ class ThemeServer(
 
     private val controlConnected = CountDownLatch(1)
     private val fileConnected = CountDownLatch(1)
+    private val tucReady = CountDownLatch(1)
     private val events = LinkedBlockingQueue<IncomingJson>()
     private var watchdog: Thread? = null
 
@@ -116,13 +127,36 @@ class ThemeServer(
         closeQuietly(controlServer)
         closeQuietly(fileServer)
         watchdog?.interrupt()
+        LogSink.close()
     }
 
     private fun run() {
         try {
+            LogSink.open(ctx.getExternalFilesDir(null) ?: ctx.filesDir)
             bind()
-            listener.onState("等待车机连接 17818 / 19000（${mode.label}）")
-            listener.onLog("监听 0.0.0.0:17818 / 19000 · 协议 func=${mode.func}")
+            val targetPkg = pkg
+            when (action) {
+                ThemeServerAction.CLEANUP -> {
+                    logBoth("监听 0.0.0.0:17818 · 空间诊断与残留清理")
+                    listener.onState("等待车机连接 17818（空间诊断与残留清理）")
+                }
+                ThemeServerAction.OVERWRITE_THEME_STAGING -> {
+                    logBoth("监听 0.0.0.0:17818 / 19000 · THEME 暂存区覆盖清理")
+                    listener.onState("等待车机连接 17818 / 19000（覆盖清理 THEME 暂存区）")
+                }
+                ThemeServerAction.OVERWRITE_WALLPAPER_STAGING -> {
+                    logBoth("监听 0.0.0.0:17818 / 19000 · WALLPAPER 暂存区覆盖清理")
+                    listener.onState("等待车机连接 17818 / 19000（覆盖清理 WALLPAPER 暂存区）")
+                }
+                ThemeServerAction.CLEAN_NAVI_CACHE -> {
+                    logBoth("监听 0.0.0.0:17818 · 清理车机导航缓存")
+                    listener.onState("等待车机连接 17818（清理车机导航缓存）")
+                }
+                ThemeServerAction.UPLOAD -> {
+                    logBoth("监听 0.0.0.0:17818 / 19000 · 协议 func=${mode.func}")
+                    listener.onState("等待车机连接 17818 / 19000（${mode.label}）")
+                }
+            }
 
             Thread({ acceptControl() }, "theme-control").apply { isDaemon = true; start() }
             Thread({ acceptFiles() }, "theme-files").apply { isDaemon = true; start() }
@@ -131,13 +165,42 @@ class ThemeServer(
                 fail("等待车机连接 17818 超时")
                 return
             }
-            if (!fileConnected.await(60, TimeUnit.SECONDS)) {
-                fail("等待车机连接 19000 超时")
-                return
-            }
+            if (!running) return
+            // 等车机完成 TUC GET 握手再发指令，避免刚建连时被车机忽略
+            tucReady.await(2000, TimeUnit.MILLISECONDS)
+            if (running) Thread.sleep(200)
             if (!running) return
 
-            runStateMachine()
+            when (action) {
+                ThemeServerAction.CLEANUP -> {
+                    runDiagnosticAndCleanup()
+                    return
+                }
+                ThemeServerAction.CLEAN_NAVI_CACHE -> {
+                    runCleanNaviCache()
+                    return
+                }
+                ThemeServerAction.OVERWRITE_THEME_STAGING,
+                ThemeServerAction.OVERWRITE_WALLPAPER_STAGING,
+                -> {
+                    if (!fileConnected.await(60, TimeUnit.SECONDS)) {
+                        fail("等待车机连接 19000 超时")
+                        return
+                    }
+                    if (!running) return
+                    val func = if (action == ThemeServerAction.OVERWRITE_WALLPAPER_STAGING) "WALLPAPER" else "THEME"
+                    runOverwriteStaging(func)
+                    return
+                }
+                ThemeServerAction.UPLOAD -> {
+                    if (!fileConnected.await(60, TimeUnit.SECONDS)) {
+                        fail("等待车机连接 19000 超时")
+                        return
+                    }
+                    if (!running) return
+                    runStateMachine(targetPkg!!)
+                }
+            }
         } catch (t: Throwable) {
             if (running) fail("上传失败：${t.message}")
         }
@@ -232,7 +295,7 @@ class ThemeServer(
             // 兼容极少数固件在 19000 直接发裸 JSON 的情况；正常情况都是 EE FD 帧或二进制帧
             if (first == '{'.code) {
                 val raw = readBraceJson(input) ?: continue
-                listener.onLog("$port<< $raw")
+                logBoth("$port<< $raw")
                 parseAndEnqueue(port, raw, output, outLock)
                 continue
             }
@@ -242,14 +305,14 @@ class ThemeServer(
             } catch (_: SocketTimeoutException) {
                 continue
             } catch (t: Throwable) {
-                if (running) listener.onLog("$port 读帧失败：${t.message}")
+                if (running) logBoth("$port 读帧失败：${t.message}")
                 return
             }
 
-            com.tailg.probe.LogSink.rawFrame("THEME_$port", "RX", frame.type, frame.cmd, frame.payload)
+            LogSink.rawFrame("THEME_$port", "RX", frame.type, frame.cmd, frame.payload)
             if (Codec.isJson(frame)) {
                 val text = Codec.jsonText(frame)
-                listener.onLog("$port<< ${text.take(300)}")
+                logBoth("$port<< ${text.take(300)}")
                 parseAndEnqueue(port, text, output, outLock)
             } else {
                 handleBinary(port, frame, output, outLock)
@@ -271,6 +334,7 @@ class ThemeServer(
                 """{"msg_id":27,"func":"TUC","act":"SEND","tuc":"${config.tuc}","tucs":${config.tucs}}""",
             )
             sendJson(port, output, outLock, """{"msg_id":27,"func":"TUC","act":"STATUS","status":1}""")
+            tucReady.countDown()
             return
         }
         events.offer(IncomingJson(port, json))
@@ -323,7 +387,192 @@ class ThemeServer(
         }
     }
 
-    private fun runStateMachine() {
+    private fun runDiagnosticAndCleanup() {
+        listener.onState("正在查询车机存储空间与残留任务…")
+
+        fun fmtMb(bytes: Long): String = if (bytes < 0) "$bytes" else "%.2f MB (%d B)".format(bytes / 1024.0 / 1024.0, bytes)
+
+        fun queryAct1(func: String): JSONObject? {
+            sendControlJson("""{"msg_id":27,"func":"$func","act":1}""")
+            val resp = awaitJson(5_000) {
+                it.json.optString("func") == func && it.json.optInt("act") == 1
+            }?.json
+            if (resp == null) {
+                listener.onLog("$func act=1 无响应")
+                return null
+            }
+            val disk = resp.optLong("diskspace", -999)
+            val theme = resp.optLong("themespace", -999)
+            val spst = resp.optInt("spst", -1)
+            val task = resp.optString("task", "")
+            val upres = resp.optInt("upresult", -1)
+            logBoth(
+                "$func act=1: diskspace=${fmtMb(disk)}, themespace=${fmtMb(theme)}, spst=$spst, task=$task, upresult=$upres | raw=$resp",
+            )
+            return resp
+        }
+
+        fun sendAct(func: String, act: Int) {
+            sendControlJson("""{"msg_id":27,"func":"$func","act":$act}""")
+            val resp = awaitJson(2_500) {
+                it.json.optString("func") == func && it.json.optInt("act") == act
+            }?.json
+            logBoth("$func act=$act 清理回包：${resp?.toString() ?: "无回包"}")
+            Thread.sleep(150)
+        }
+
+        queryAct1("THEME")
+        sendAct("THEME", 5)
+        sendAct("THEME", 6)
+        queryAct1("WALLPAPER")
+        sendAct("WALLPAPER", 5)
+        sendAct("WALLPAPER", 6)
+
+        for (diskFunc in listOf("UPDATE", "8773EWP_UPDATE")) {
+            sendControlJson("""{"msg_id":27,"func":"$diskFunc","act":"GET_DISKSPACE"}""")
+            val diskResp = awaitJson(2_000) {
+                it.json.optString("func") == diskFunc && it.json.optString("act") == "GET_DISKSPACE"
+            }?.json
+            if (diskResp != null) {
+                logBoth("$diskFunc GET_DISKSPACE: $diskResp")
+            }
+        }
+
+        sendControlJson("""{"msg_id":27,"func":"INSIDENAVI","CMD":"pull_cityList"}""")
+        val cityResp = awaitJson(2_500) {
+            it.json.optString("func") == "INSIDENAVI"
+        }?.json
+        if (cityResp != null) {
+            logBoth("INSIDENAVI pull_cityList: $cityResp")
+        }
+
+        val after = queryAct1("THEME")
+        val summary = if (after != null) {
+            val disk = after.optLong("diskspace", -1)
+            val theme = after.optLong("themespace", -1)
+            "清理后可用: ${fmtMb(disk)} · 主题占用: ${fmtMb(theme)}"
+        } else {
+            "清理指令已发送（详见日志）"
+        }
+        logBoth("诊断汇总: $summary")
+        listener.onState(summary)
+        listener.onDone()
+        stop()
+    }
+
+    private fun runCleanNaviCache() {
+        fun fmtMb(bytes: Long): String = if (bytes < 0) "$bytes" else "%.2f MB".format(bytes / 1024.0 / 1024.0)
+        listener.onState("1/3 查询清理前空间…")
+        sendControlJson("""{"msg_id":27,"func":"THEME","act":1}""")
+        val beforeDisk = awaitJson(5_000) {
+            it.json.optString("func") == "THEME" && it.json.optInt("act") == 1
+        }?.json?.optLong("diskspace", -1) ?: -1L
+        logBoth("清理导航缓存前 diskspace=${fmtMb(beforeDisk)}")
+
+        listener.onState("2/3 查询离线地图列表并清理导航缓存…")
+        sendControlJson("""{"msg_id":27,"func":"INSIDENAVI","CMD":"pull_cityList"}""")
+        val cities = awaitJson(2_500) { it.json.optString("func") == "INSIDENAVI" }?.json
+        logBoth("INSIDENAVI pull_cityList: ${cities?.toString() ?: "无回包"}")
+
+        sendControlJson("""{"msg_id":27,"func":"INSIDENAVI","CMD":"remove_cache"}""")
+        val rmResp = awaitJson(4_000) { it.json.optString("func") == "INSIDENAVI" }?.json
+        logBoth("INSIDENAVI remove_cache: ${rmResp?.toString() ?: "无回包"}")
+        Thread.sleep(300)
+
+        listener.onState("3/3 查询清理后空间…")
+        sendControlJson("""{"msg_id":27,"func":"THEME","act":1}""")
+        val afterDisk = awaitJson(5_000) {
+            it.json.optString("func") == "THEME" && it.json.optInt("act") == 1
+        }?.json?.optLong("diskspace", -1) ?: -1L
+
+        val summary = "导航缓存清理完成：可用 ${fmtMb(afterDisk)}（清理前 ${fmtMb(beforeDisk)}）"
+        logBoth(summary)
+        listener.onState(summary)
+        listener.onDone()
+        stop()
+    }
+
+    private fun runOverwriteStaging(func: String) {
+        val dir = File(ctx.cacheDir, "staging_clean_${func.lowercase()}").apply { mkdirs() }
+        val dummyIni = File(dir, "config.ini").apply {
+            val content = if (func == "WALLPAPER") {
+                "[wallpaper]\nWallpaperName=Clean\nCustomName=Clean\nVersion=0.0.1\n"
+            } else {
+                "ThemeName=\"Clean\"\nCustomName=\"Clean\"\n"
+            }
+            writeText(content, Charsets.UTF_8)
+        }
+        // 22-byte minimal valid empty ZIP (EOCD record)
+        val dummyZip = File(dir, "package.zip").apply {
+            writeBytes(
+                byteArrayOf(
+                    0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                ),
+            )
+        }
+        val taskId = "clean000000000000001"
+        fun fmtMb(bytes: Long): String = if (bytes < 0) "$bytes" else "%.2f MB".format(bytes / 1024.0 / 1024.0)
+
+        listener.onState("1/4 查询 $func 空间与旧任务…")
+        val act1Before = queryStatusAndClearStale(taskId) ?: return
+        val beforeDisk = act1Before.optLong("diskspace", -1)
+        logBoth("$func 覆盖前 diskspace=${fmtMb(beforeDisk)} ($beforeDisk B)")
+
+        listener.onState("2/4 下发清理占位任务 (act=2)…")
+        sendControlJson("""{"msg_id":27,"func":"$func","act":2,"task":"$taskId"}""")
+        val act2 = awaitJson(10_000) {
+            it.json.optString("func") == func && it.json.optInt("act") == 2
+        } ?: run {
+            fail("等待车机确认任务 (act=2) 超时")
+            return
+        }
+        if (act2.json.optInt("result", 0) != 0) {
+            fail("车机拒绝任务 (act=2 result=${act2.json.optInt("result")})")
+            return
+        }
+
+        sendControlJson("""{"msg_id":27,"func":"$func","act":4,"type":0}""")
+        val act4Pre = awaitJson(10_000) {
+            it.json.optString("func") == func && it.json.optInt("act") == 4
+        } ?: run {
+            fail("等待车机状态检查 (act=4 type=0) 超时")
+            return
+        }
+        if (act4Pre.json.optInt("speed", 0) > 0 || act4Pre.json.optInt("gears", 0) > 0) {
+            fail("请先停车并挂空档/驻车后再执行")
+            return
+        }
+
+        listener.onState("3/4 覆盖 $func 暂存区 config.ini + 22B package.zip…")
+        val r1 = transferSingleFile(dummyIni, "config.ini", isLast = false) ?: return
+        if (r1 == FileResult.NEXT_FILE) {
+            transferSingleFile(dummyZip, "package.zip", isLast = true) ?: return
+        }
+
+        listener.onState("4/4 发送 $func act=5 取消并清理暂存区（不触发安装）…")
+        sendControlJson("""{"msg_id":27,"func":"$func","act":5}""")
+        val act5 = awaitJson(5_000) {
+            it.json.optString("func") == func && it.json.optInt("act") == 5
+        }?.json
+        logBoth("$func act=5 清理回包：${act5?.toString() ?: "无回包"}")
+        Thread.sleep(300)
+
+        sendControlJson("""{"msg_id":27,"func":"THEME","act":1}""")
+        val act1After = awaitJson(5_000) {
+            it.json.optString("func") == "THEME" && it.json.optInt("act") == 1
+        }?.json
+        val afterDisk = act1After?.optLong("diskspace", -1) ?: -1L
+        val afterTheme = act1After?.optLong("themespace", -1) ?: -1L
+        val summary = "$func 暂存区覆盖清理完成：可用 ${fmtMb(afterDisk)}（清理前 ${fmtMb(beforeDisk)}），主题占用 ${fmtMb(afterTheme)}"
+        logBoth(summary)
+        listener.onState(summary)
+        listener.onDone()
+        stop()
+    }
+
+    private fun runStateMachine(pkg: ThemePackageInfo) {
         val taskId = pkg.md5.take(20).ifBlank { "10000c21f4237b145a98" }
 
         // 1. act=1 查询车机存储空间与残留任务
@@ -407,12 +656,21 @@ class ThemeServer(
         stop()
     }
 
+    private fun sendAndAwaitAct1(func: String): JSONObject? {
+        repeat(4) {
+            if (!running) return null
+            sendControlJson("""{"msg_id":27,"func":"$func","act":1}""")
+            val hit = awaitJson(2_500) {
+                it.json.optString("func") == func && it.json.optInt("act") == 1
+            }?.json
+            if (hit != null) return hit
+        }
+        return null
+    }
+
     private fun queryStatusAndClearStale(taskId: String): JSONObject? {
         repeat(2) { attempt ->
-            sendControlJson("""{"msg_id":27,"func":"${mode.func}","act":1}""")
-            val resp = awaitJson(10_000) {
-                it.json.optString("func") == mode.func && it.json.optInt("act") == 1
-            }?.json ?: run {
+            val resp = sendAndAwaitAct1(mode.func) ?: run {
                 fail("等待车机响应 ${mode.func} act=1 超时（车机未应答或不支持 ${mode.func}）")
                 return null
             }
@@ -592,9 +850,14 @@ class ThemeServer(
         return null
     }
 
+    private fun logBoth(msg: String) {
+        LogSink.line("THEME", msg)
+        listener.onLog(msg)
+    }
+
     private fun step(n: Int, text: String) {
         listener.onState("步骤 $n/7：$text")
-        listener.onLog("步骤 $n/7：$text")
+        logBoth("步骤 $n/7：$text")
     }
 
     private fun sendControlJson(json: String) {
@@ -603,9 +866,9 @@ class ThemeServer(
     }
 
     private fun sendJson(port: Int, output: OutputStream, lock: Any, json: String) {
-        listener.onLog("$port>> $json")
+        logBoth("$port>> $json")
         val bytes = Codec.jsonFrame(json)
-        com.tailg.probe.LogSink.raw("THEME_$port", "TX", bytes)
+        LogSink.raw("THEME_$port", "TX", bytes)
         synchronized(lock) {
             output.write(bytes)
             output.flush()
@@ -629,6 +892,8 @@ class ThemeServer(
     private fun fail(message: String) {
         if (!running) return
         running = false
+        LogSink.line("THEME_ERR", message)
+        LogSink.close()
         listener.onError(message)
         listener.onState("失败：$message")
         Log.e("ThemeUpload", message)

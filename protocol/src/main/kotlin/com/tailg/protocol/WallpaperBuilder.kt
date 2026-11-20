@@ -79,6 +79,37 @@ object WallpaperBuilder {
         return outZipFile
     }
 
+    /** 生成一个 ~1KB 的 1×1 黑图占位壁纸包，用于覆盖车机上过大的壁纸以释放空间。 */
+    fun buildTinyPlaceholder(
+        outZipFile: File,
+        workDir: File,
+        wallpaperName: String = "TinyClean",
+    ): File {
+        if (!workDir.exists()) workDir.mkdirs()
+        val tinyPng = File(workDir, "tiny_bg.png")
+        tinyPng.writeBytes(TINY_1X1_PNG)
+        return build(
+            mediaFile = tinyPng,
+            isVideo = false,
+            wallpaperName = wallpaperName,
+            outZipFile = outZipFile,
+            workDir = workDir,
+        )
+    }
+
+    // 1x1 黑色 RGBA PNG (68 bytes)
+    private val TINY_1X1_PNG = byteArrayOf(
+        0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x90.toByte(), 0x77, 0x53,
+        0xDE.toByte(), 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+        0x54, 0x08, 0xD7.toByte(), 0x63, 0x60, 0x60, 0x60, 0x00,
+        0x00, 0x00, 0x04, 0x00, 0x01, 0x27, 0x34, 0x27,
+        0x0A, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+        0x44, 0xAE.toByte(), 0x42, 0x60, 0x82.toByte(),
+    )
+
     private fun md5Hex(file: File): String {
         val md = MessageDigest.getInstance("MD5")
         val buf = ByteArray(64 * 1024)

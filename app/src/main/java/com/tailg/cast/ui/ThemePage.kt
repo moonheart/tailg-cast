@@ -52,6 +52,11 @@ fun ThemePage(
     onUpload: () -> Unit,
     onCancel: () -> Unit,
     onRestartService: () -> Unit,
+    onCheckAndClean: () -> Unit,
+    onBuildTinyWallpaper: () -> Unit,
+    onOverwriteThemeStaging: () -> Unit,
+    onOverwriteWallpaperStaging: () -> Unit,
+    onCleanNaviCache: () -> Unit,
 ) {
     var showDetails by remember { mutableStateOf(false) }
     var showLog by remember { mutableStateOf(false) }
@@ -188,6 +193,51 @@ fun ThemePage(
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
         }
+    }
+
+    SectionCard(
+        title = "空间诊断与急救",
+        helpText = "如果提示存储空间不足（官方安装要求剩余空间 > 54.83 MB），可依次尝试以下 5 种清理/覆盖方式：",
+    ) {
+        OutlinedButton(
+            onClick = onCheckAndClean,
+            enabled = !state.running && !busy,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+        ) { Text("1. 查询空间/分区 & 清理残留 (act=5/6)") }
+
+        OutlinedButton(
+            onClick = onOverwriteThemeStaging,
+            enabled = !state.running && !busy,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+        ) { Text("2. 覆盖清理 THEME 暂存区 (不安装)") }
+
+        OutlinedButton(
+            onClick = onOverwriteWallpaperStaging,
+            enabled = !state.running && !busy,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+        ) { Text("3. 覆盖清理 WALLPAPER 暂存区 (不安装)") }
+
+        OutlinedButton(
+            onClick = onCleanNaviCache,
+            enabled = !state.running && !busy,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+        ) { Text("4. 清理车机导航缓存 & 查离线地图") }
+
+        OutlinedButton(
+            onClick = onBuildTinyWallpaper,
+            enabled = !state.running && !busy,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+        ) { Text("5. 生成极小占位壁纸包 (~1KB 上传覆盖)") }
     }
 
     ActionRow(

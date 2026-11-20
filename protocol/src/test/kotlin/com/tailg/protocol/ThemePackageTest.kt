@@ -83,6 +83,20 @@ class ThemePackageTest {
         }
     }
 
+    @Test
+    fun `builds tiny placeholder wallpaper under 4KB and extracts cleanly`() {
+        val outZip = File(root, "tiny_wallpaper.zip")
+        WallpaperBuilder.buildTinyPlaceholder(outZip, File(root, "work"))
+
+        assertTrue(outZip.isFile)
+        assertTrue(outZip.length() in 100..4096)
+
+        val info = ThemePackage.extract(outZip, File(root, "out_tiny"))
+        assertEquals("TinyClean", info.customName)
+        assertTrue(info.md5Matched)
+        assertTrue(info.packageSize in 50..2048)
+    }
+
     private fun zip(file: File, block: ZipOutputStream.() -> Unit) {
         ZipOutputStream(FileOutputStream(file)).use { out ->
             out.block()
