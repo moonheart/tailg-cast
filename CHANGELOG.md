@@ -4,9 +4,17 @@
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-11-20
+
 ### 新增
+- **CarLife 车联转发模式**：新增 `CarlifeBridge`（`127.0.0.1:7240/8240/9340`）将本机 CarLife H.264 视频流零重编码转发给台铃仪表；已 Root 设备（KernelSU/Magisk）支持通过 `su` 自动拉起系统 Car+ 连接，未 Root 设备需先在系统 Car+ 手动点「去连接」。
+- **高德 / 百度导航精简车机版 (UCar)**：虚拟屏模式新增「导航精简车机版 (UCar)」开关，分别通过高德 `UcarSplashActivity` 与百度 `HiCarWelcomeScreen` 免 Root 拉起无广告、大地图的精简车机界面。
+- **主题空间诊断与急救工具**：主题页新增 `diskspace` / `themespace` 查询与 `act=5/6` 残留清理、`THEME` / `WALLPAPER` 暂存区覆盖清理（不触发安装）、导航缓存清理，以及 ~1KB 占位壁纸包一键生成；`ThemeServer` 日志同步落盘至 `sessions/` 并补齐 `TUC` 握手等待与 `act=1` 重试。
 - **收藏点改用地图优先添加**：点「添加收藏点」直接打开地图，不再需要手填经纬度；地图顶部可搜索地名/门牌地址（百度网页搜索，失败回退 OpenStreetMap Nominatim，均无需 key），也可直接点地图选点。
 - **选点页新增备注字段**：备注作为收藏点名称（留空则用搜索到的地点名，再留空用「收藏点 N」），搜索到的地址自动保存；新收藏点保存后自动设为当前目的地。坐标统一转为 GCJ-02。
+
+### 修复
+- **修复 CarLife 首帧黑屏**：`CastEngine.pushExternalH264` 支持从首帧 `SPS+PPS+IDR` 合并包中提取并缓存 `codecConfig`，避免预览解码器重建后无参数黑屏。
 
 ## [v0.3.0] - 2026-11-14
 
